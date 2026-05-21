@@ -1,6 +1,7 @@
 """
-PESTEL Agricultural Price Dashboard
+Generic Data Exploration Dashboard
 Module 1 : Dashboard interactif — visualisation données d'entrée
+Entièrement générique : fonctionne avec n'importe quel dataset CSV
 """
 
 import base64
@@ -9,7 +10,6 @@ import dash
 from dash import dcc, html, Input, Output, State, dash_table
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -18,31 +18,15 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_PATH = BASE_DIR / 'data' / 'pestel_agricole.csv'
 
-PESTEL_COLORS = {
-    'Politique':      '#E8A838',
-    'Économique':     '#4ECDC4',
-    'Social':         '#A78BFA',
-    'Technologique':  '#34D399',
-    'Environnemental':'#6EE7B7',
-    'Légal':          '#F87171',
-}
+# Palette de couleurs génériques pour les séries/catégories
+SERIES_COLORS = [
+    '#4ECDC4', '#E8A838', '#A78BFA', '#34D399',
+    '#F87171', '#60A5FA', '#FB923C', '#E879F9',
+    '#A3E635', '#FDBA74', '#93C5FD', '#6EE7B7',
+]
 
-PESTEL_COLS = {
-    'Politique':      ['stabilite_politique', 'politique_commerciale', 'subventions_agricoles'],
-    'Économique':     ['pib_mondial_growth', 'inflation_us', 'taux_change_usd_eur', 'demande_mondiale'],
-    'Social':         ['croissance_population', 'urbanisation_pct', 'revenu_moyen'],
-    'Technologique':  ['investissement_agritech', 'rendement_agricole_index', 'adoption_irrigation'],
-    'Environnemental':['anomalie_temperature', 'precipitations_index', 'superficie_cultivee_mha', 'indice_secheresse'],
-    'Légal':          ['reglementation_export', 'normes_phytosanitaires', 'accord_commerce_international'],
-}
-
-PRODUCT_COLORS = {
-    'Cacao': '#CD853F',
-    'Café':  '#A0522D',
-    'Maïs':  '#DAA520',
-    'Soja':  '#6B8E23',
-    'Coton': '#B8C4C8',
-}
+def get_color(i):
+    return SERIES_COLORS[i % len(SERIES_COLORS)]
 
 # ─── HELPERS ──────────────────────────────────────────────────────────────────
 def load_default():
@@ -53,35 +37,77 @@ def load_default():
 
 def df_to_json(df):
     d = df.copy()
-    if 'date' in d.columns:
-        d['date'] = d['date'].astype(str)
+    for c in d.select_dtypes(include=['datetime64[ns]', 'datetime64[ns, UTC]']).columns:
+        d[c] = d[c].astype(str)
     return d.to_json(orient='split')
 
 def json_to_df(j):
     df = pd.read_json(io.StringIO(j), orient='split')
-    if 'date' in df.columns:
-        df['date'] = pd.to_datetime(df['date'], errors='coerce')
+    # Tenter de détecter les colonnes date
+    for c in df.columns:
+        if 'date' in c.lower() or 'time' in c.lower() or 'année' in c.lower() or 'year' in c.lower():
+            try:
+                parsed = pd.to_datetime(df[c], errors='coerce')
+                if parsed.notna().sum() > len(df) * 0.5:
+                    df[c] = parsed
+            except Exception:
+                pass
     return df
 
-def empty_fig():
+def detect_date_col(df):
+    """Retourne le nom de la première colonne datetime trouvée."""
+    for c in df.columns:
+        if pd.api.types.is_datetime64_any_dtype(df[c]):
+            return c
+    return None
+
+def detect_group_col(df):
+    """Retourne la première colonne catégorielle à faible cardinalité (<=30 valeurs)."""
+    for c in df.select_dtypes(include=['object', 'category']).columns:
+        if 1 < df[c].nunique() <= 30:
+            return c
+    return None
+
+def get_numeric_cols(df):
+    return list(df.select_dtypes(include='number').columns)
+
+def label(col):
+    return col.replace('_', ' ').title()
+
+def empty_fig(msg='Aucune donnée'):
     fig = go.Figure()
     fig.update_layout(
         paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
         font=dict(color='rgba(255,255,255,0.3)'),
         xaxis=dict(visible=False), yaxis=dict(visible=False),
-        annotations=[dict(text='Aucune donnée', x=0.5, y=0.5, showarrow=False,
+        annotations=[dict(text=msg, x=0.5, y=0.5, showarrow=False,
                           font=dict(color='rgba(255,255,255,0.2)', size=14))],
+        margin=dict(l=10, r=10, t=10, b=10),
     )
     return fig
 
-def base_layout():
-    return dict(
+def base_layout(**extra):
+    d = dict(
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
         font=dict(family='JetBrains Mono', color='rgba(255,255,255,0.7)', size=11),
         margin=dict(l=10, r=10, t=10, b=10),
         legend=dict(bgcolor='rgba(0,0,0,0)', bordercolor='rgba(255,255,255,0.1)', borderwidth=1),
     )
+    d.update(extra)
+    return d
+
+CARD = {
+    'background': 'rgba(255,255,255,0.04)',
+    'border': '1px solid rgba(255,255,255,0.10)',
+    'borderRadius': '12px', 'padding': '20px', 'marginBottom': '16px',
+}
+
+def section_title(text, color='#4ECDC4'):
+    return html.Div(text, style={
+        'fontFamily': 'Syne', 'fontWeight': '700', 'fontSize': '13px',
+        'color': color, 'letterSpacing': '1px', 'marginBottom': '12px',
+    })
 
 def kpi_card(title, value, unit, color, icon):
     return html.Div([
@@ -92,7 +118,7 @@ def kpi_card(title, value, unit, color, icon):
             'textTransform': 'uppercase', 'marginBottom': '4px',
         }),
         html.Span(value, style={
-            'fontFamily': 'Syne', 'fontSize': '24px', 'fontWeight': '800', 'color': color,
+            'fontFamily': 'Syne', 'fontSize': '22px', 'fontWeight': '800', 'color': color,
         }),
         html.Span(f' {unit}', style={
             'fontFamily': 'JetBrains Mono', 'fontSize': '11px', 'color': 'rgba(255,255,255,0.35)',
@@ -102,20 +128,15 @@ def kpi_card(title, value, unit, color, icon):
         'border': '1px solid rgba(255,255,255,0.10)',
         'borderTop': f'3px solid {color}',
         'borderRadius': '12px', 'padding': '16px 20px',
-        'textAlign': 'center', 'flex': '1', 'minWidth': '150px',
+        'textAlign': 'center', 'flex': '1', 'minWidth': '140px',
     })
 
-CARD = {
-    'background': 'rgba(255,255,255,0.04)',
-    'border': '1px solid rgba(255,255,255,0.10)',
-    'borderRadius': '12px', 'padding': '20px', 'marginBottom': '16px',
+DROPDOWN_STYLE = {
+    'backgroundColor': '#1a2533',
+    'color': '#e8eaed',
+    'border': '1px solid rgba(255,255,255,0.15)',
+    'borderRadius': '6px',
 }
-
-def section_title(text, color):
-    return html.Div(text, style={
-        'fontFamily': 'Syne', 'fontWeight': '700', 'fontSize': '13px',
-        'color': color, 'letterSpacing': '1px', 'marginBottom': '12px',
-    })
 
 # ─── APP ──────────────────────────────────────────────────────────────────────
 app = dash.Dash(
@@ -125,20 +146,23 @@ app = dash.Dash(
         'https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap',
     ],
     suppress_callback_exceptions=True,
-    title='PESTEL — Marchés Agricoles',
+    title='Data Explorer Dashboard',
 )
 
-# Pré-charger les données par défaut pour initialiser le store
+# Données par défaut pour initialiser les composants
 _df0 = load_default()
-_dates0 = sorted(_df0['date'].unique()) if 'date' in _df0.columns else []
+_num0 = get_numeric_cols(_df0)
+_opts0 = [{'label': label(c), 'value': c} for c in _num0]
+_date_col0 = detect_date_col(_df0)
+_group_col0 = detect_group_col(_df0)
+_dates0 = sorted(_df0[_date_col0].dropna().unique()) if _date_col0 else []
 _n0 = len(_dates0)
-_marks0 = {i: str(pd.Timestamp(d).year) for i, d in enumerate(_dates0) if i % 12 == 0 or i == _n0 - 1}
-_num_cols0 = [c for c in _df0.select_dtypes(include='number').columns if c != 'prix_usd_tonne']
-_opts0 = [{'label': c.replace('_', ' ').title(), 'value': c} for c in _num_cols0]
+_marks0 = {i: str(pd.Timestamp(d).year) for i, d in enumerate(_dates0) if i % 12 == 0 or i == _n0 - 1} if _n0 > 0 else {0: '0'}
 
 # ─── LAYOUT ───────────────────────────────────────────────────────────────────
-app.layout = html.Div(style={'background': '#0d1520', 'minHeight': '100vh',
-                              'fontFamily': 'Syne, sans-serif', 'color': '#e8eaed'}, children=[
+app.layout = html.Div(
+    style={'background': '#0d1520', 'minHeight': '100vh', 'fontFamily': 'Syne, sans-serif', 'color': '#e8eaed'},
+    children=[
 
     # HEADER
     html.Div(style={
@@ -148,22 +172,19 @@ app.layout = html.Div(style={'background': '#0d1520', 'minHeight': '100vh',
         'alignItems': 'center', 'justifyContent': 'space-between',
     }, children=[
         html.Div([
-            html.Div('PESTEL ANALYTICS', style={
+            html.Div('DATA EXPLORER', style={
                 'fontFamily': 'Syne', 'fontWeight': '800', 'fontSize': '20px',
                 'letterSpacing': '3px', 'color': '#4ECDC4',
             }),
-            html.Div("Marchés Agricoles · Visualisation des données d'entrée", style={
+            html.Div('Visualisation interactive · Dataset universel', style={
                 'fontFamily': 'JetBrains Mono', 'fontSize': '11px',
                 'color': 'rgba(255,255,255,0.4)', 'letterSpacing': '1px',
             }),
         ]),
-        html.Div([
-            html.Span('● ', style={'color': '#34D399', 'fontSize': '11px'}),
-            html.Span('MODULE 1 / 3 — INPUT DASHBOARD', style={
-                'fontFamily': 'JetBrains Mono', 'fontSize': '10px',
-                'color': 'rgba(255,255,255,0.35)', 'letterSpacing': '2px',
-            }),
-        ]),
+        html.Div(id='dataset-badge', style={
+            'fontFamily': 'JetBrains Mono', 'fontSize': '10px',
+            'color': 'rgba(255,255,255,0.35)', 'letterSpacing': '2px',
+        }),
     ]),
 
     # CONTRÔLES
@@ -193,44 +214,44 @@ app.layout = html.Div(style={'background': '#0d1520', 'minHeight': '100vh',
                 }),
             ], style={'flex': '2', 'minWidth': '260px'}),
 
-            # Produit
+            # Colonne de groupe (catégorielle)
             html.Div([
-                html.Div('🌿 Produit', style={
+                html.Div('🏷 Regrouper par', style={
                     'fontFamily': 'JetBrains Mono', 'fontSize': '10px',
                     'letterSpacing': '2px', 'color': '#A78BFA', 'marginBottom': '6px',
                 }),
-                dcc.Dropdown(id='product-selector',
-                    options=[{'label': p, 'value': p} for p in ['Tous'] + list(PRODUCT_COLORS.keys())],
-                    value='Tous', clearable=False,
-                    style={'minWidth': '140px'},
+                dcc.Dropdown(id='group-col-selector',
+                    options=[], value=None, clearable=True,
+                    placeholder='(aucun)',
+                    style={'minWidth': '160px'},
                 ),
-            ], style={'flex': '1', 'minWidth': '130px'}),
+            ], style={'flex': '1', 'minWidth': '160px'}),
 
-            # Slider date
+            # Valeur du groupe
             html.Div([
-                html.Div('📅 Période', style={
+                html.Div('🔍 Filtrer la valeur', style={
                     'fontFamily': 'JetBrains Mono', 'fontSize': '10px',
                     'letterSpacing': '2px', 'color': '#E8A838', 'marginBottom': '6px',
                 }),
+                dcc.Dropdown(id='group-value-selector',
+                    options=[], value=None, clearable=True,
+                    placeholder='Toutes',
+                    style={'minWidth': '140px'},
+                ),
+            ], style={'flex': '1', 'minWidth': '140px'}),
+
+            # Slider date (masqué si pas de col date)
+            html.Div(id='date-slider-container', children=[
+                html.Div('📅 Période', style={
+                    'fontFamily': 'JetBrains Mono', 'fontSize': '10px',
+                    'letterSpacing': '2px', 'color': '#34D399', 'marginBottom': '6px',
+                }),
                 dcc.RangeSlider(
-                    id='date-slider', min=0, max=_n0 - 1, step=1,
-                    value=[0, _n0 - 1], marks=_marks0,
+                    id='date-slider', min=0, max=max(_n0 - 1, 0), step=1,
+                    value=[0, max(_n0 - 1, 0)], marks=_marks0,
                     tooltip={'placement': 'bottom', 'always_visible': False},
                 ),
             ], style={'flex': '3', 'minWidth': '280px'}),
-
-            # Catégorie PESTEL
-            html.Div([
-                html.Div('🔬 Facteur PESTEL', style={
-                    'fontFamily': 'JetBrains Mono', 'fontSize': '10px',
-                    'letterSpacing': '2px', 'color': '#F87171', 'marginBottom': '6px',
-                }),
-                dcc.Dropdown(id='pestel-category',
-                    options=[{'label': k, 'value': k} for k in ['Tous'] + list(PESTEL_COLS.keys())],
-                    value='Tous', clearable=False,
-                    style={'minWidth': '150px'},
-                ),
-            ], style={'flex': '1', 'minWidth': '150px'}),
         ]),
     ]),
 
@@ -240,53 +261,108 @@ app.layout = html.Div(style={'background': '#0d1520', 'minHeight': '100vh',
     # GRAPHIQUES
     html.Div(style={'padding': '0 32px 32px'}, children=[
 
-        # Ligne 1 : Prix + Donut
-        dbc.Row([
-            dbc.Col([html.Div(style=CARD, children=[
-                section_title('📈 Évolution des prix (USD/tonne)', '#4ECDC4'),
-                dcc.Graph(id='price-chart', config={'displayModeBar': False}, style={'height': '300px'}),
-            ])], md=8),
-            dbc.Col([html.Div(style=CARD, children=[
-                section_title('🥧 Répartition des produits', '#A78BFA'),
-                dcc.Graph(id='donut-chart', config={'displayModeBar': False}, style={'height': '300px'}),
-            ])], md=4),
-        ]),
-
-        # Ligne 2 : PESTEL time series
+        # Ligne 1 : Série temporelle (ou index)
         dbc.Row([dbc.Col([html.Div(style=CARD, children=[
-            section_title('🌐 Indicateurs PESTEL dans le temps', '#E8A838'),
-            dcc.Graph(id='pestel-timeseries', config={'displayModeBar': True}, style={'height': '320px'}),
+            html.Div(style={'display': 'flex', 'gap': '12px', 'flexWrap': 'wrap',
+                            'alignItems': 'center', 'marginBottom': '12px'}, children=[
+                section_title('📈 Séries temporelles', '#4ECDC4'),
+                html.Div([
+                    dcc.Dropdown(id='ts-y-cols',
+                        options=_opts0,
+                        value=_num0[:3] if len(_num0) >= 3 else _num0,
+                        multi=True,
+                        placeholder='Choisir des colonnes…',
+                        style={'minWidth': '320px'},
+                    ),
+                ]),
+            ]),
+            dcc.Graph(id='timeseries-chart', config={'displayModeBar': True}, style={'height': '320px'}),
         ])], md=12)]),
 
-        # Ligne 3 : Heatmap + Distribution
+        # Ligne 2 : Scatter + Distribution
         dbc.Row([
             dbc.Col([html.Div(style=CARD, children=[
-                section_title('🔥 Heatmap de corrélation PESTEL × Prix', '#34D399'),
-                dcc.Graph(id='correlation-heatmap', config={'displayModeBar': False}, style={'height': '400px'}),
+                section_title('🔭 Nuage de points', '#4ECDC4'),
+                html.Div(style={'display': 'flex', 'gap': '10px', 'flexWrap': 'wrap', 'marginBottom': '10px'}, children=[
+                    dcc.Dropdown(id='scatter-x', options=_opts0,
+                        value=_num0[0] if _num0 else None, clearable=False,
+                        placeholder='Axe X', style={'flex': '1', 'minWidth': '140px'}),
+                    dcc.Dropdown(id='scatter-y', options=_opts0,
+                        value=_num0[1] if len(_num0) > 1 else (_num0[0] if _num0 else None),
+                        clearable=False, placeholder='Axe Y',
+                        style={'flex': '1', 'minWidth': '140px'}),
+                ]),
+                dcc.Graph(id='scatter-chart', config={'displayModeBar': False}, style={'height': '300px'}),
             ])], md=7),
+
             dbc.Col([html.Div(style=CARD, children=[
-                section_title('📊 Distribution des indicateurs', '#F87171'),
-                dcc.Dropdown(id='dist-col-selector',
-                    options=_opts0, value=_num_cols0[0] if _num_cols0 else None,
-                    clearable=False, style={'marginBottom': '10px'}),
-                dcc.Graph(id='distribution-chart', config={'displayModeBar': False}, style={'height': '330px'}),
+                section_title('📊 Distribution', '#F87171'),
+                dcc.Dropdown(id='dist-col', options=_opts0,
+                    value=_num0[0] if _num0 else None, clearable=False,
+                    style={'marginBottom': '10px'}),
+                dcc.Graph(id='distribution-chart', config={'displayModeBar': False}, style={'height': '300px'}),
             ])], md=5),
         ]),
 
-        # Ligne 4 : Scatter + Radar
+        # Ligne 3 : Heatmap corrélation + Donut/Bar catégoriel
         dbc.Row([
             dbc.Col([html.Div(style=CARD, children=[
-                section_title('🔭 Nuage de points : Indicateur × Prix', '#4ECDC4'),
-                dcc.Dropdown(id='scatter-x-col',
-                    options=_opts0, value=_num_cols0[0] if _num_cols0 else None,
-                    clearable=False, style={'marginBottom': '10px'}),
-                dcc.Graph(id='scatter-chart', config={'displayModeBar': False}, style={'height': '310px'}),
+                section_title('🔥 Matrice de corrélation', '#34D399'),
+                html.Div(style={'display': 'flex', 'gap': '10px', 'flexWrap': 'wrap', 'marginBottom': '10px'}, children=[
+                    dcc.Dropdown(id='heatmap-cols',
+                        options=_opts0,
+                        value=_num0[:8] if len(_num0) >= 8 else _num0,
+                        multi=True,
+                        placeholder='Colonnes à corréler…',
+                        style={'flex': '1', 'minWidth': '260px'}),
+                ]),
+                dcc.Graph(id='correlation-heatmap', config={'displayModeBar': False}, style={'height': '380px'}),
             ])], md=7),
+
             dbc.Col([html.Div(style=CARD, children=[
-                section_title('🕸 Radar PESTEL par produit', '#A78BFA'),
-                dcc.Graph(id='radar-chart', config={'displayModeBar': False}, style={'height': '350px'}),
+                section_title('🥧 Agrégation par groupe', '#A78BFA'),
+                html.Div(style={'display': 'flex', 'gap': '10px', 'flexWrap': 'wrap', 'marginBottom': '10px'}, children=[
+                    dcc.Dropdown(id='agg-col',
+                        options=_opts0,
+                        value=_num0[0] if _num0 else None,
+                        clearable=False,
+                        placeholder='Colonne à agréger',
+                        style={'flex': '1', 'minWidth': '140px'}),
+                    dcc.Dropdown(id='agg-func',
+                        options=[
+                            {'label': 'Moyenne', 'value': 'mean'},
+                            {'label': 'Somme', 'value': 'sum'},
+                            {'label': 'Médiane', 'value': 'median'},
+                            {'label': 'Max', 'value': 'max'},
+                            {'label': 'Min', 'value': 'min'},
+                        ],
+                        value='mean', clearable=False,
+                        style={'flex': '1', 'minWidth': '120px'}),
+                ]),
+                dcc.Graph(id='agg-chart', config={'displayModeBar': False}, style={'height': '340px'}),
             ])], md=5),
         ]),
+
+        # Ligne 4 : Box plot multi-colonnes
+        dbc.Row([dbc.Col([html.Div(style=CARD, children=[
+            section_title('📦 Box plots comparatifs', '#E8A838'),
+            html.Div(style={'display': 'flex', 'gap': '10px', 'flexWrap': 'wrap', 'marginBottom': '10px'}, children=[
+                dcc.Dropdown(id='box-cols',
+                    options=_opts0,
+                    value=_num0[:5] if len(_num0) >= 5 else _num0,
+                    multi=True,
+                    placeholder='Colonnes à afficher…',
+                    style={'flex': '1', 'minWidth': '260px'}),
+                dcc.Dropdown(id='box-type',
+                    options=[
+                        {'label': 'Box plot', 'value': 'box'},
+                        {'label': 'Violin', 'value': 'violin'},
+                    ],
+                    value='box', clearable=False,
+                    style={'minWidth': '130px'}),
+            ]),
+            dcc.Graph(id='box-chart', config={'displayModeBar': True}, style={'height': '320px'}),
+        ])], md=12)]),
 
         # Ligne 5 : Tableau
         html.Div(style=CARD, children=[
@@ -302,9 +378,15 @@ app.layout = html.Div(style={'background': '#0d1520', 'minHeight': '100vh',
         ]),
     ]),
 
-    # Stores — initialisés avec les données par défaut
+    # Stores
     dcc.Store(id='filtered-data-store', data=df_to_json(_df0)),
     dcc.Store(id='raw-data-store', data=None),
+    dcc.Store(id='meta-store', data={
+        'date_col': _date_col0,
+        'group_col': _group_col0,
+        'num_cols': _num0,
+        'dates': [str(d) for d in _dates0],
+    }),
 ])
 
 
@@ -327,200 +409,229 @@ def handle_upload(contents, filename):
         df = pd.read_csv(io.StringIO(decoded.decode('utf-8')))
         if df.empty:
             return dash.no_update, '⚠ Fichier vide'
-        if 'date' in df.columns:
-            df['date'] = pd.to_datetime(df['date'], errors='coerce')
-        return df_to_json(df), f'✓ {filename} — {len(df)} lignes · {len(df.columns)} colonnes'
+        # Détecter colonnes date
+        for c in df.columns:
+            if 'date' in c.lower() or 'time' in c.lower():
+                try:
+                    df[c] = pd.to_datetime(df[c], errors='coerce')
+                except Exception:
+                    pass
+        return df_to_json(df), f'✓ {filename} — {len(df):,} lignes · {len(df.columns)} colonnes'
     except Exception as e:
         return dash.no_update, f'⚠ Erreur : {e}'
 
 
-# 2. Filtres → filtered-data-store + màj dropdowns + slider
+# 2. Nouveau dataset → mise à jour meta + contrôles
 @app.callback(
-    Output('filtered-data-store', 'data'),
-    Output('dist-col-selector', 'options'),
-    Output('dist-col-selector', 'value'),
-    Output('scatter-x-col', 'options'),
-    Output('scatter-x-col', 'value'),
+    Output('meta-store', 'data'),
+    Output('group-col-selector', 'options'),
+    Output('group-col-selector', 'value'),
     Output('date-slider', 'max'),
     Output('date-slider', 'marks'),
+    Output('date-slider', 'value'),
+    Output('dataset-badge', 'children'),
     Input('raw-data-store', 'data'),
-    Input('product-selector', 'value'),
-    Input('date-slider', 'value'),
-    Input('pestel-category', 'value'),
+    prevent_initial_call=True,
 )
-def filter_data(raw_json, product, date_range, pestel_cat):
-    df = json_to_df(raw_json) if raw_json else load_default()
-
-    # Dates disponibles
-    if 'date' in df.columns:
-        dates_sorted = sorted(df['date'].dropna().unique())
-    else:
-        dates_sorted = []
-
-    n = len(dates_sorted)
+def update_meta(raw_json):
+    if not raw_json:
+        return dash.no_update, [], None, 0, {0: '0'}, [0, 0], ''
+    df = json_to_df(raw_json)
+    date_col = detect_date_col(df)
+    group_col = detect_group_col(df)
+    num_cols = get_numeric_cols(df)
+    dates = sorted(df[date_col].dropna().unique()) if date_col else []
+    n = len(dates)
     marks = {}
     if n > 0:
-        for i, d in enumerate(dates_sorted):
-            if i % 12 == 0 or i == n - 1:
-                marks[i] = str(pd.Timestamp(d).year)
-        slider_max = n - 1
+        for i, d in enumerate(dates):
+            if i % max(1, n // 8) == 0 or i == n - 1:
+                marks[i] = str(pd.Timestamp(d).year if hasattr(pd.Timestamp(d), 'year') else d)
     else:
-        slider_max = 0
         marks = {0: '0'}
 
-    # Filtrer par produit
-    if product and product != 'Tous' and 'produit' in df.columns:
-        df = df[df['produit'] == product]
+    # Options de groupe
+    cat_cols = [c for c in df.select_dtypes(include=['object', 'category']).columns if 1 < df[c].nunique() <= 30]
+    group_opts = [{'label': label(c), 'value': c} for c in cat_cols]
+
+    meta = {
+        'date_col': date_col,
+        'group_col': group_col,
+        'num_cols': num_cols,
+        'dates': [str(d) for d in dates],
+    }
+    badge = f'● {len(df):,} lignes · {len(df.columns)} col · {len(num_cols)} numériques'
+    return meta, group_opts, group_col, max(n - 1, 0), marks, [0, max(n - 1, 0)], badge
+
+
+# 3. Options valeur du groupe — lit UNIQUEMENT raw-data-store pour éviter le cycle
+@app.callback(
+    Output('group-value-selector', 'options'),
+    Output('group-value-selector', 'value'),
+    Input('group-col-selector', 'value'),
+    Input('raw-data-store', 'data'),
+)
+def update_group_values(group_col, raw_json):
+    if not group_col:
+        return [], None
+    try:
+        df = json_to_df(raw_json) if raw_json else load_default()
+        vals = sorted(df[group_col].dropna().unique().tolist())
+        opts = [{'label': str(v), 'value': str(v)} for v in vals]
+        return opts, None
+    except Exception:
+        return [], None
+
+
+# 4. Filtres → filtered-data-store + màj des dropdowns de colonnes
+@app.callback(
+    Output('filtered-data-store', 'data'),
+    Output('ts-y-cols', 'options'),
+    Output('ts-y-cols', 'value'),
+    Output('scatter-x', 'options'),
+    Output('scatter-x', 'value'),
+    Output('scatter-y', 'options'),
+    Output('scatter-y', 'value'),
+    Output('dist-col', 'options'),
+    Output('dist-col', 'value'),
+    Output('heatmap-cols', 'options'),
+    Output('heatmap-cols', 'value'),
+    Output('agg-col', 'options'),
+    Output('agg-col', 'value'),
+    Output('box-cols', 'options'),
+    Output('box-cols', 'value'),
+    Input('raw-data-store', 'data'),
+    Input('group-col-selector', 'value'),
+    Input('group-value-selector', 'value'),
+    Input('date-slider', 'value'),
+    Input('meta-store', 'data'),
+)
+def filter_data(raw_json, group_col, group_val, date_range, meta):
+    df = json_to_df(raw_json) if raw_json else load_default()
+    date_col = meta.get('date_col') if meta else detect_date_col(df)
+    dates = meta.get('dates', []) if meta else []
+
+    # Filtrer par groupe
+    if group_col and group_val and group_col in df.columns:
+        df = df[df[group_col].astype(str) == str(group_val)]
 
     # Filtrer par date
-    if n > 0 and 'date' in df.columns and date_range:
-        s_idx = max(0, min(date_range[0], n - 1))
-        e_idx = max(0, min(date_range[1], n - 1))
-        df = df[(df['date'] >= dates_sorted[s_idx]) & (df['date'] <= dates_sorted[e_idx])]
+    if date_col and dates and date_range and len(dates) > 0:
+        s_idx = max(0, min(date_range[0], len(dates) - 1))
+        e_idx = max(0, min(date_range[1], len(dates) - 1))
+        try:
+            d_start = pd.Timestamp(dates[s_idx])
+            d_end = pd.Timestamp(dates[e_idx])
+            df = df[(df[date_col] >= d_start) & (df[date_col] <= d_end)]
+        except Exception:
+            pass
 
-    # Colonnes numériques
-    num_cols = [c for c in df.select_dtypes(include='number').columns if c != 'prix_usd_tonne']
+    num_cols = get_numeric_cols(df)
+    opts = [{'label': label(c), 'value': c} for c in num_cols]
 
-    if pestel_cat and pestel_cat != 'Tous' and pestel_cat in PESTEL_COLS:
-        filtered_cols = [c for c in PESTEL_COLS[pestel_cat] if c in df.columns]
-        num_cols = filtered_cols if filtered_cols else num_cols
+    def safe_val(n, idx=0):
+        return num_cols[idx] if len(num_cols) > idx else (num_cols[0] if num_cols else None)
 
-    opts = [{'label': c.replace('_', ' ').title(), 'value': c} for c in num_cols]
-    default_col = num_cols[0] if num_cols else None
+    ts_val = num_cols[:3] if len(num_cols) >= 3 else num_cols
+    hm_val = num_cols[:8] if len(num_cols) >= 8 else num_cols
+    box_val = num_cols[:5] if len(num_cols) >= 5 else num_cols
 
-    return df_to_json(df), opts, default_col, opts, default_col, slider_max, marks
+    return (
+        df_to_json(df),
+        opts, ts_val,
+        opts, safe_val(num_cols, 0),
+        opts, safe_val(num_cols, 1),
+        opts, safe_val(num_cols, 0),
+        opts, hm_val,
+        opts, safe_val(num_cols, 0),
+        opts, box_val,
+    )
 
 
-# 3. KPI Cards
-@app.callback(Output('kpi-section', 'children'), Input('filtered-data-store', 'data'))
-def update_kpis(json_data):
+# 5. KPI generiques
+@app.callback(Output('kpi-section', 'children'), Input('filtered-data-store', 'data'), Input('meta-store', 'data'))
+def update_kpis(json_data, meta):
     if not json_data:
         return []
     try:
         df = json_to_df(json_data)
         cards = []
-        if 'prix_usd_tonne' in df.columns:
-            cards.append(kpi_card('Prix Moyen', f"{df['prix_usd_tonne'].mean():,.0f}", 'USD/T', '#4ECDC4', '💰'))
-        if 'inflation_us' in df.columns:
-            cards.append(kpi_card('Inflation US', f"{df['inflation_us'].mean():.1f}", '%', '#E8A838', '📉'))
-        if 'pib_mondial_growth' in df.columns:
-            cards.append(kpi_card('PIB Mondial', f"{df['pib_mondial_growth'].mean():.1f}", '%', '#34D399', '🌍'))
-        if 'anomalie_temperature' in df.columns:
-            cards.append(kpi_card('Anomalie Temp.', f"{df['anomalie_temperature'].mean():+.2f}", '°C', '#F87171', '🌡'))
-        if 'date' in df.columns:
-            cards.append(kpi_card('Périodes', str(df['date'].nunique()), 'mois', '#A78BFA', '📅'))
-        cards.append(kpi_card('Observations', f'{len(df):,}', 'lignes', '#6EE7B7', '🗂'))
+        num_cols = get_numeric_cols(df)
+        # Lignes
+        cards.append(kpi_card('Lignes', f'{len(df):,}', '', '#4ECDC4', '🗂'))
+        # Colonnes
+        cards.append(kpi_card('Colonnes', str(len(df.columns)), '', '#A78BFA', '📐'))
+        # Premières colonnes numériques avec stat rapide
+        for i, c in enumerate(num_cols[:4]):
+            color = get_color(i + 2)
+            mean_val = df[c].mean()
+            if abs(mean_val) >= 1000:
+                fmt = f'{mean_val:,.0f}'
+            elif abs(mean_val) >= 1:
+                fmt = f'{mean_val:.2f}'
+            else:
+                fmt = f'{mean_val:.4f}'
+            cards.append(kpi_card(f'Moy. {label(c)[:14]}', fmt, '', color, '📊'))
+
+        # Périodes si date dispo
+        date_col = meta.get('date_col') if meta else None
+        if date_col and date_col in df.columns:
+            cards.append(kpi_card('Périodes', str(df[date_col].nunique()), '', '#34D399', '📅'))
+
         return html.Div(children=cards,
                         style={'display': 'flex', 'gap': '12px', 'flexWrap': 'wrap', 'marginBottom': '16px'})
     except Exception:
         return []
 
 
-# 4. Prix chart
+# 6. Série temporelle (ou index si pas de date)
 @app.callback(
-    Output('price-chart', 'figure'),
+    Output('timeseries-chart', 'figure'),
     Input('filtered-data-store', 'data'),
-    Input('product-selector', 'value'),
+    Input('ts-y-cols', 'value'),
+    Input('meta-store', 'data'),
+    Input('group-col-selector', 'value'),
 )
-def update_price_chart(json_data, product):
-    if not json_data:
+def update_timeseries(json_data, y_cols, meta, group_col):
+    if not json_data or not y_cols:
         return empty_fig()
     try:
         df = json_to_df(json_data)
-        if 'date' not in df.columns or 'prix_usd_tonne' not in df.columns:
+        cols = [y_cols] if isinstance(y_cols, str) else list(y_cols)
+        cols = [c for c in cols if c in df.columns]
+        if not cols:
             return empty_fig()
+
+        date_col = meta.get('date_col') if meta else detect_date_col(df)
+        x_axis = df[date_col] if date_col and date_col in df.columns else df.index
+
         fig = go.Figure()
-        prods = ([product] if product and product != 'Tous'
-                 else (list(df['produit'].unique()) if 'produit' in df.columns else [None]))
-        for p in prods:
-            sub = df[df['produit'] == p].sort_values('date') if p and 'produit' in df.columns else df.sort_values('date')
-            color = PRODUCT_COLORS.get(p, '#4ECDC4')
-            fig.add_trace(go.Scatter(
-                x=sub['date'], y=sub['prix_usd_tonne'], name=str(p),
-                mode='lines', line=dict(color=color, width=2),
-                hovertemplate=f'<b>{p}</b><br>%{{x}}<br>%{{y:,.0f}} USD/T<extra></extra>',
-            ))
+
+        if group_col and group_col in df.columns and len(cols) == 1:
+            # Mode : une colonne, séries par groupe
+            col = cols[0]
+            for i, grp in enumerate(sorted(df[group_col].dropna().unique())):
+                sub = df[df[group_col] == grp].sort_values(date_col) if date_col else df[df[group_col] == grp]
+                x = sub[date_col] if date_col and date_col in sub.columns else sub.index
+                fig.add_trace(go.Scatter(
+                    x=x, y=sub[col], name=str(grp),
+                    mode='lines', line=dict(color=get_color(i), width=2),
+                ))
+        else:
+            # Mode : plusieurs colonnes
+            for i, col in enumerate(cols):
+                agg = df.groupby(date_col)[col].mean().reset_index().sort_values(date_col) if date_col and date_col in df.columns else df[[col]].reset_index()
+                x = agg[date_col] if date_col and date_col in agg.columns else agg.index
+                fig.add_trace(go.Scatter(
+                    x=x, y=agg[col], name=label(col),
+                    mode='lines', line=dict(color=get_color(i), width=2),
+                ))
+
         layout = base_layout()
         layout.update(dict(
             hovermode='x unified',
             xaxis=dict(gridcolor='rgba(255,255,255,0.05)', zeroline=False),
-            yaxis=dict(gridcolor='rgba(255,255,255,0.05)', zeroline=False, title='USD / tonne'),
-        ))
-        fig.update_layout(**layout)
-        return fig
-    except Exception as e:
-        return empty_fig()
-
-
-# 5. Donut
-@app.callback(Output('donut-chart', 'figure'), Input('filtered-data-store', 'data'))
-def update_donut(json_data):
-    if not json_data:
-        return empty_fig()
-    try:
-        df = json_to_df(json_data)
-        if 'produit' not in df.columns or 'prix_usd_tonne' not in df.columns:
-            return empty_fig()
-        agg = df.groupby('produit')['prix_usd_tonne'].mean().reset_index()
-        fig = go.Figure(go.Pie(
-            labels=agg['produit'], values=agg['prix_usd_tonne'], hole=0.55,
-            marker_colors=[PRODUCT_COLORS.get(p, '#888') for p in agg['produit']],
-            textinfo='label+percent',
-            textfont=dict(family='JetBrains Mono', size=11),
-            hovertemplate='<b>%{label}</b><br>Prix moyen : %{value:,.0f} USD/T<extra></extra>',
-        ))
-        layout = base_layout()
-        layout.update(showlegend=False, annotations=[dict(
-            text='Prix moy.', x=0.5, y=0.5, showarrow=False,
-            font=dict(size=12, family='Syne', color='rgba(255,255,255,0.5)'),
-        )])
-        fig.update_layout(**layout)
-        return fig
-    except Exception:
-        return empty_fig()
-
-
-# 6. PESTEL time series
-@app.callback(
-    Output('pestel-timeseries', 'figure'),
-    Input('filtered-data-store', 'data'),
-    Input('pestel-category', 'value'),
-    Input('product-selector', 'value'),
-)
-def update_pestel_ts(json_data, cat, product):
-    if not json_data:
-        return empty_fig()
-    try:
-        df = json_to_df(json_data)
-        if 'date' not in df.columns:
-            return empty_fig()
-        if product and product != 'Tous' and 'produit' in df.columns:
-            df = df[df['produit'] == product]
-
-        if cat == 'Tous':
-            cols_to_show = [(k, v[0]) for k, v in PESTEL_COLS.items() if v and v[0] in df.columns]
-        else:
-            cols_to_show = [(cat, c) for c in PESTEL_COLS.get(cat, []) if c in df.columns]
-
-        if not cols_to_show:
-            return empty_fig()
-
-        num_cols = [c for _, c in cols_to_show]
-        agg = df.groupby('date')[num_cols].mean().reset_index().sort_values('date')
-        fig = go.Figure()
-        for cat_name, col in cols_to_show:
-            color = PESTEL_COLORS.get(cat_name, '#888')
-            fig.add_trace(go.Scatter(
-                x=agg['date'], y=agg[col],
-                name=col.replace('_', ' ').title(),
-                mode='lines', line=dict(color=color, width=1.8),
-                hovertemplate=f'<b>{col}</b> : %{{y:.2f}}<extra></extra>',
-            ))
-        layout = base_layout()
-        layout.update(dict(
-            hovermode='x unified',
-            xaxis=dict(gridcolor='rgba(255,255,255,0.04)', zeroline=False),
-            yaxis=dict(gridcolor='rgba(255,255,255,0.04)', zeroline=False),
+            yaxis=dict(gridcolor='rgba(255,255,255,0.05)', zeroline=False),
             legend=dict(bgcolor='rgba(13,21,32,0.9)', orientation='h',
                         yanchor='bottom', y=1.02, xanchor='left', x=0,
                         bordercolor='rgba(255,255,255,0.1)', borderwidth=1),
@@ -528,72 +639,101 @@ def update_pestel_ts(json_data, cat, product):
         ))
         fig.update_layout(**layout)
         return fig
-    except Exception:
-        return empty_fig()
+    except Exception as e:
+        return empty_fig(f'Erreur : {e}')
 
 
-# 7. Heatmap corrélation
+# 7. Scatter
 @app.callback(
-    Output('correlation-heatmap', 'figure'),
+    Output('scatter-chart', 'figure'),
     Input('filtered-data-store', 'data'),
-    Input('product-selector', 'value'),
+    Input('scatter-x', 'value'),
+    Input('scatter-y', 'value'),
+    Input('group-col-selector', 'value'),
 )
-def update_heatmap(json_data, product):
-    if not json_data:
+def update_scatter(json_data, x_col, y_col, group_col):
+    if not json_data or not x_col or not y_col:
         return empty_fig()
     try:
         df = json_to_df(json_data)
-        if product and product != 'Tous' and 'produit' in df.columns:
-            df = df[df['produit'] == product]
-        num_df = df.select_dtypes(include='number')
-        if len(num_df.columns) < 2:
+        if x_col not in df.columns or y_col not in df.columns:
             return empty_fig()
-        corr = num_df.corr()
-        labels = [c.replace('_', '<br>') for c in corr.columns]
-        fig = go.Figure(go.Heatmap(
-            z=corr.values, x=labels, y=labels,
-            colorscale=[[0, '#E8A838'], [0.5, '#1a2533'], [1, '#4ECDC4']],
-            zmid=0,
-            text=np.round(corr.values, 2),
-            texttemplate='%{text:.1f}',
-            textfont=dict(size=8, family='JetBrains Mono'),
-            hovertemplate='%{y} × %{x} : %{z:.3f}<extra></extra>',
-        ))
+        fig = go.Figure()
+
+        if group_col and group_col in df.columns:
+            groups = sorted(df[group_col].dropna().unique())
+            for i, grp in enumerate(groups):
+                sub = df[df[group_col] == grp]
+                fig.add_trace(go.Scatter(
+                    x=sub[x_col], y=sub[y_col], mode='markers', name=str(grp),
+                    marker=dict(color=get_color(i), size=5, opacity=0.75,
+                                line=dict(width=0.5, color='rgba(255,255,255,0.1)')),
+                ))
+        else:
+            fig.add_trace(go.Scatter(
+                x=df[x_col], y=df[y_col], mode='markers', name='Points',
+                marker=dict(color='#4ECDC4', size=5, opacity=0.7,
+                            line=dict(width=0.5, color='rgba(255,255,255,0.1)')),
+            ))
+        # Trend
+        try:
+            x_v = df[x_col].dropna()
+            y_v = df.loc[x_v.index, y_col].dropna()
+            idx = x_v.index.intersection(y_v.index)
+            coeffs = np.polyfit(x_v[idx], y_v[idx], 1)
+            xr = np.linspace(x_v.min(), x_v.max(), 100)
+            fig.add_trace(go.Scatter(
+                x=xr, y=np.polyval(coeffs, xr), mode='lines', name='Tendance',
+                line=dict(color='rgba(255,255,255,0.4)', width=1.5, dash='dash'),
+                hoverinfo='skip',
+            ))
+        except Exception:
+            pass
         layout = base_layout()
-        layout.update(xaxis=dict(side='bottom', tickangle=-45, tickfont=dict(size=8)))
+        layout.update(
+            xaxis=dict(gridcolor='rgba(255,255,255,0.05)', title=label(x_col)),
+            yaxis=dict(gridcolor='rgba(255,255,255,0.05)', title=label(y_col)),
+        )
         fig.update_layout(**layout)
         return fig
-    except Exception:
-        return empty_fig()
+    except Exception as e:
+        return empty_fig(f'Erreur : {e}')
 
 
 # 8. Distribution
 @app.callback(
     Output('distribution-chart', 'figure'),
     Input('filtered-data-store', 'data'),
-    Input('dist-col-selector', 'value'),
-    Input('product-selector', 'value'),
+    Input('dist-col', 'value'),
+    Input('group-col-selector', 'value'),
 )
-def update_distribution(json_data, col, product):
+def update_distribution(json_data, col, group_col):
     if not json_data or not col:
         return empty_fig()
     try:
         df = json_to_df(json_data)
         if col not in df.columns:
             return empty_fig()
-        if product and product != 'Tous' and 'produit' in df.columns:
-            df = df[df['produit'] == product]
-        cat_name = next((k for k, v in PESTEL_COLS.items() if col in v), 'Autre')
-        color = PESTEL_COLORS.get(cat_name, '#4ECDC4')
         fig = go.Figure()
-        fig.add_trace(go.Histogram(
-            x=df[col].dropna(), nbinsx=25,
-            marker_color=color, opacity=0.8,
-            hovertemplate='%{x:.2f} : %{y} obs.<extra></extra>',
-        ))
-        # KDE
-        vals = df[col].dropna()
-        if len(vals) > 5:
+
+        if group_col and group_col in df.columns:
+            groups = sorted(df[group_col].dropna().unique())
+            for i, grp in enumerate(groups):
+                vals = df[df[group_col] == grp][col].dropna()
+                fig.add_trace(go.Histogram(
+                    x=vals, name=str(grp), nbinsx=20,
+                    marker_color=get_color(i), opacity=0.65,
+                ))
+            layout = base_layout()
+            layout.update(barmode='overlay', bargap=0.05,
+                xaxis=dict(gridcolor='rgba(255,255,255,0.05)', title=label(col)),
+                yaxis=dict(gridcolor='rgba(255,255,255,0.05)', title='Fréquence'),
+            )
+        else:
+            vals = df[col].dropna()
+            fig.add_trace(go.Histogram(
+                x=vals, nbinsx=25, marker_color='#4ECDC4', opacity=0.8,
+            ))
             try:
                 from scipy.stats import gaussian_kde
                 kde = gaussian_kde(vals)
@@ -606,124 +746,155 @@ def update_distribution(json_data, col, product):
                 ))
             except Exception:
                 pass
-        layout = base_layout()
-        layout.update(
-            showlegend=False, bargap=0.05,
-            xaxis=dict(gridcolor='rgba(255,255,255,0.05)', title=col.replace('_', ' ').title()),
-            yaxis=dict(gridcolor='rgba(255,255,255,0.05)', title='Fréquence'),
-        )
+            layout = base_layout()
+            layout.update(showlegend=False, bargap=0.05,
+                xaxis=dict(gridcolor='rgba(255,255,255,0.05)', title=label(col)),
+                yaxis=dict(gridcolor='rgba(255,255,255,0.05)', title='Fréquence'),
+            )
         fig.update_layout(**layout)
         return fig
-    except Exception:
-        return empty_fig()
+    except Exception as e:
+        return empty_fig(f'Erreur : {e}')
 
 
-# 9. Scatter
+# 9. Heatmap corrélation
 @app.callback(
-    Output('scatter-chart', 'figure'),
+    Output('correlation-heatmap', 'figure'),
     Input('filtered-data-store', 'data'),
-    Input('scatter-x-col', 'value'),
+    Input('heatmap-cols', 'value'),
 )
-def update_scatter(json_data, x_col):
-    if not json_data or not x_col:
+def update_heatmap(json_data, cols):
+    if not json_data or not cols:
         return empty_fig()
     try:
         df = json_to_df(json_data)
-        if x_col not in df.columns or 'prix_usd_tonne' not in df.columns:
-            return empty_fig()
-        fig = go.Figure()
-        prods = list(df['produit'].unique()) if 'produit' in df.columns else [None]
-        for p in prods:
-            sub = df[df['produit'] == p] if p and 'produit' in df.columns else df
-            color = PRODUCT_COLORS.get(p, '#4ECDC4')
-            fig.add_trace(go.Scatter(
-                x=sub[x_col], y=sub['prix_usd_tonne'],
-                mode='markers', name=str(p) if p else 'Données',
-                marker=dict(color=color, size=5, opacity=0.7,
-                            line=dict(width=0.5, color='rgba(255,255,255,0.15)')),
-                hovertemplate=f'<b>{p}</b><br>{x_col}: %{{x:.2f}}<br>Prix: %{{y:,.0f}}<extra></extra>',
-            ))
-        # Trend line
-        try:
-            x_v = df[x_col].dropna()
-            y_v = df.loc[x_v.index, 'prix_usd_tonne']
-            coeffs = np.polyfit(x_v, y_v, 1)
-            xr = np.linspace(x_v.min(), x_v.max(), 100)
-            fig.add_trace(go.Scatter(
-                x=xr, y=np.polyval(coeffs, xr),
-                mode='lines', name='Tendance',
-                line=dict(color='rgba(255,255,255,0.45)', width=1.5, dash='dash'),
-                hoverinfo='skip',
-            ))
-        except Exception:
-            pass
+        cols = [c for c in (cols if isinstance(cols, list) else [cols]) if c in df.columns]
+        if len(cols) < 2:
+            return empty_fig('Sélectionnez au moins 2 colonnes')
+        corr = df[cols].corr()
+        labels = [c.replace('_', '<br>') for c in corr.columns]
+        fig = go.Figure(go.Heatmap(
+            z=corr.values, x=labels, y=labels,
+            colorscale=[[0, '#E8A838'], [0.5, '#1a2533'], [1, '#4ECDC4']],
+            zmid=0,
+            text=np.round(corr.values, 2),
+            texttemplate='%{text:.2f}',
+            textfont=dict(size=9, family='JetBrains Mono'),
+            hovertemplate='%{y} × %{x} : %{z:.3f}<extra></extra>',
+        ))
         layout = base_layout()
-        layout.update(
-            xaxis=dict(gridcolor='rgba(255,255,255,0.05)', title=x_col.replace('_', ' ').title()),
-            yaxis=dict(gridcolor='rgba(255,255,255,0.05)', title='Prix USD/T'),
-        )
+        layout.update(xaxis=dict(side='bottom', tickangle=-45, tickfont=dict(size=9)))
         fig.update_layout(**layout)
         return fig
-    except Exception:
-        return empty_fig()
+    except Exception as e:
+        return empty_fig(f'Erreur : {e}')
 
 
-# 10. Radar
+# 10. Agrégation par groupe (bar / donut)
 @app.callback(
-    Output('radar-chart', 'figure'),
+    Output('agg-chart', 'figure'),
     Input('filtered-data-store', 'data'),
-    Input('pestel-category', 'value'),
+    Input('agg-col', 'value'),
+    Input('agg-func', 'value'),
+    Input('group-col-selector', 'value'),
+    Input('meta-store', 'data'),
 )
-def update_radar(json_data, cat):
-    if not json_data:
+def update_agg(json_data, agg_col, agg_func, group_col, meta):
+    if not json_data or not agg_col:
         return empty_fig()
     try:
         df = json_to_df(json_data)
-        if 'produit' not in df.columns:
+        if agg_col not in df.columns:
             return empty_fig()
-        radar_cols = []
-        for category, cols in PESTEL_COLS.items():
-            if cat == 'Tous' or cat == category:
-                radar_cols += [c for c in cols if c in df.columns]
-        if not radar_cols:
-            return empty_fig()
-        col_min = df[radar_cols].min()
-        col_max = df[radar_cols].max()
-        col_range = (col_max - col_min).replace(0, 1)
-        fig = go.Figure()
-        for prod in df['produit'].unique():
-            sub = df[df['produit'] == prod][radar_cols].mean()
-            norm = ((sub - col_min) / col_range * 10).fillna(0)
-            vals = list(norm.values) + [norm.values[0]]
-            labels = [c.replace('_', ' ').title() for c in radar_cols] + [radar_cols[0].replace('_', ' ').title()]
-            color = PRODUCT_COLORS.get(prod, '#888888')
-            fig.add_trace(go.Scatterpolar(
-                r=vals, theta=labels, fill='toself', name=prod,
-                line=dict(color=color, width=2),
-                fillcolor=color + '30',
-                hovertemplate='<b>' + str(prod) + '</b><br>%{theta} : %{r:.1f}<extra></extra>',
+
+        # Choisir colonne de groupe
+        grp = group_col if group_col and group_col in df.columns else detect_group_col(df)
+        if not grp:
+            # Pas de colonne cat : histogramme simple
+            return empty_fig('Sélectionnez une colonne de regroupement')
+
+        agg = df.groupby(grp)[agg_col].agg(agg_func).reset_index().sort_values(agg_col, ascending=False)
+        colors = [get_color(i) for i in range(len(agg))]
+
+        if len(agg) <= 8:
+            fig = go.Figure(go.Pie(
+                labels=agg[grp], values=agg[agg_col], hole=0.5,
+                marker_colors=colors,
+                textinfo='label+percent',
+                textfont=dict(family='JetBrains Mono', size=10),
+                hovertemplate='<b>%{label}</b> : %{value:.2f}<extra></extra>',
             ))
-        fig.update_layout(
-            polar=dict(
-                bgcolor='rgba(0,0,0,0)',
-                radialaxis=dict(visible=True, range=[0, 10],
-                                gridcolor='rgba(255,255,255,0.1)',
-                                tickfont=dict(size=8, family='JetBrains Mono', color='rgba(255,255,255,0.35)'),
-                                tickangle=0),
-                angularaxis=dict(gridcolor='rgba(255,255,255,0.1)',
-                                 tickfont=dict(size=9, family='JetBrains Mono', color='rgba(255,255,255,0.55)')),
-            ),
-            paper_bgcolor='rgba(0,0,0,0)',
-            font=dict(family='JetBrains Mono', color='rgba(255,255,255,0.7)', size=10),
-            legend=dict(bgcolor='rgba(0,0,0,0)', bordercolor='rgba(255,255,255,0.1)'),
-            margin=dict(l=30, r=30, t=20, b=20),
-        )
+            layout = base_layout()
+            layout.update(showlegend=False)
+        else:
+            fig = go.Figure(go.Bar(
+                x=agg[grp], y=agg[agg_col],
+                marker_color=colors,
+                hovertemplate='<b>%{x}</b> : %{y:.2f}<extra></extra>',
+            ))
+            layout = base_layout()
+            layout.update(
+                xaxis=dict(tickangle=-35, tickfont=dict(size=9)),
+                yaxis=dict(gridcolor='rgba(255,255,255,0.05)'),
+                showlegend=False,
+            )
+        fig.update_layout(**layout)
         return fig
-    except Exception:
+    except Exception as e:
+        return empty_fig(f'Erreur : {e}')
+
+
+# 11. Box plots
+@app.callback(
+    Output('box-chart', 'figure'),
+    Input('filtered-data-store', 'data'),
+    Input('box-cols', 'value'),
+    Input('box-type', 'value'),
+    Input('group-col-selector', 'value'),
+)
+def update_box(json_data, cols, box_type, group_col):
+    if not json_data or not cols:
         return empty_fig()
+    try:
+        df = json_to_df(json_data)
+        cols = [c for c in (cols if isinstance(cols, list) else [cols]) if c in df.columns]
+        if not cols:
+            return empty_fig()
+        fig = go.Figure()
+
+        if group_col and group_col in df.columns and len(cols) == 1:
+            col = cols[0]
+            groups = sorted(df[group_col].dropna().unique())
+            for i, grp in enumerate(groups):
+                vals = df[df[group_col] == grp][col].dropna()
+                if box_type == 'violin':
+                    fig.add_trace(go.Violin(y=vals, name=str(grp), line_color=get_color(i),
+                                            fillcolor=get_color(i) + '30', box_visible=True, meanline_visible=True))
+                else:
+                    fig.add_trace(go.Box(y=vals, name=str(grp), marker_color=get_color(i)))
+        else:
+            # Normalisation z-score si plusieurs colonnes très différentes
+            for i, col in enumerate(cols):
+                vals = df[col].dropna()
+                if box_type == 'violin':
+                    fig.add_trace(go.Violin(y=vals, name=label(col), line_color=get_color(i),
+                                            fillcolor=get_color(i) + '30', box_visible=True, meanline_visible=True))
+                else:
+                    fig.add_trace(go.Box(y=vals, name=label(col), marker_color=get_color(i)))
+
+        layout = base_layout()
+        layout.update(
+            showlegend=True,
+            yaxis=dict(gridcolor='rgba(255,255,255,0.05)', zeroline=False),
+            xaxis=dict(tickangle=-20),
+        )
+        fig.update_layout(**layout)
+        return fig
+    except Exception as e:
+        return empty_fig(f'Erreur : {e}')
 
 
-# 11. Tableau
+# 12. Tableau
 @app.callback(
     Output('data-table-container', 'children'),
     Output('data-info', 'children'),
@@ -735,9 +906,11 @@ def update_table(json_data):
                                                  'fontFamily': 'JetBrains Mono', 'fontSize': '12px'}), ''
     try:
         df = json_to_df(json_data)
-        if 'date' in df.columns:
-            df['date'] = df['date'].dt.strftime('%Y-%m').fillna('')
-        preview = df.head(50)
+        # Formater les dates pour affichage
+        for c in df.columns:
+            if pd.api.types.is_datetime64_any_dtype(df[c]):
+                df[c] = df[c].dt.strftime('%Y-%m-%d').fillna('')
+        preview = df.head(100)
         table = dash_table.DataTable(
             data=preview.to_dict('records'),
             columns=[{'name': c, 'id': c} for c in preview.columns],
@@ -756,7 +929,7 @@ def update_table(json_data):
                 'color': 'rgba(255,255,255,0.75)',
                 'fontFamily': 'JetBrains Mono', 'fontSize': '11px',
                 'border': '1px solid rgba(255,255,255,0.05)',
-                'padding': '8px 12px', 'maxWidth': '130px',
+                'padding': '8px 12px', 'maxWidth': '150px',
                 'overflow': 'hidden', 'textOverflow': 'ellipsis',
             },
             style_data_conditional=[
@@ -766,7 +939,7 @@ def update_table(json_data):
             sort_action='native',
             sort_mode='multi',
         )
-        info = f'{len(df):,} lignes × {len(df.columns)} colonnes · 50 premières affichées'
+        info = f'{len(df):,} lignes × {len(df.columns)} colonnes · 100 premières affichées'
         return table, info
     except Exception as e:
         return html.Div(f'Erreur : {e}', style={'color': '#F87171', 'fontFamily': 'JetBrains Mono'}), ''

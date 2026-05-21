@@ -1,0 +1,100 @@
+/* assets/style.css */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=JetBrains+Mono:wght@400;600&display=swap');
+
+:root {
+    --ds-blue-primary: #0056b3;
+    --ds-blue-secondary: #004494;
+    --ds-accent-cyan: #00b0ff;
+    --ds-bg-light: #f4f7fa;
+    --ds-card-bg: #ffffff;
+    --ds-text-main: #2c3e50;
+    --ds-text-muted: #6c757d;
+    --ds-border-radius: 12px;
+}
+
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background-color: var(--ds-bg-light);
+    color: var(--ds-text-main);
+    line-height: 1.6;
+}
+
+/* Navbar Sophistication */
+.navbar {
+    background: linear-gradient(135deg, var(--ds-blue-primary) 0%, var(--ds-blue-secondary) 100%) !important;
+    padding: 1rem 2rem !important;
+    border-bottom: 4px solid var(--ds-accent-cyan);
+}
+
+.navbar-brand {
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    font-size: 1.5rem !important;
+}
+
+/* Cards Glassmorphism touch */
+.card {
+    border: none !important;
+    border-radius: var(--ds-border-radius) !important;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    background: var(--ds-card-bg);
+}
+
+.card:hover {
+    box-shadow: 0 10px 30px rgba(0, 86, 179, 0.08) !important;
+}
+
+/* Tabs custom styling */
+.nav-tabs {
+    border-bottom: 2px solid #dee2e6;
+    gap: 5px;
+}
+
+.nav-tabs .nav-link {
+    border: none !important;
+    border-radius: 8px 8px 0 0 !important;
+    color: var(--ds-text-muted) !important;
+    font-weight: 600;
+    padding: 12px 20px !important;
+    background: transparent !important;
+}
+
+.nav-tabs .nav-link.active {
+    color: var(--ds-blue-primary) !important;
+    background: white !important;
+    border-bottom: 3px solid var(--ds-blue-primary) !important;
+}
+
+/* Custom loading spinner color */
+#loading-content > div > div {
+    border-top-color: var(--ds-blue-primary) !important;
+}
+
+/* Dropdown & Picker styling */
+.Select-control, .DateRangePickerInput {
+    border-radius: 8px !important;
+    border: 1px solid #dcdde1 !important;
+    padding: 2px !important;
+}
+
+/* Typography for Science Data */
+h1, h2, h3, h4, h5 {
+    font-weight: 700;
+    color: var(--ds-blue-primary);
+}
+
+.kpi-label {
+    letter-spacing: 0.5px;
+    font-size: 0.75rem;
+    color: var(--ds-text-muted);
+}
+
+.kpi-value {
+    font-family: 'JetBrains Mono', monospace;
+}
+
+/* Plotly Graph styling */
+.js-plotly-plot {
+    border-radius: var(--ds-border-radius);
+    overflow: hidden;
+}

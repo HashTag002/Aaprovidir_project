@@ -1,20 +1,204 @@
 <!DOCTYPE html>
-<html>
+<html lang="fr">
 <head>
-    <title>Pestel Analytics - Dashboard</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>AaPROVIDIR Analytics</title>
     <style>
-        body { font-family: sans-serif; text-align: center; padding-top: 50px; background-color: #1e1e1e; color: white; }
-        .container { max-width: 800px; margin: auto; border: 1px solid #444; padding: 20px; border-radius: 8px; }
-        a { color: #4ECDC4; text-decoration: none; font-weight: bold; }
-        .btn { display: inline-block; margin-top: 20px; padding: 10px 20px; background: #4ECDC4; color: #1e1e1e; border-radius: 4px; }
+        :root {
+            --blue: #0f3d5e;
+            --blue-light: #176b87;
+            --accent: #2bb3a3;
+            --bg: #f6f8fb;
+            --text: #1f2937;
+            --muted: #64748b;
+            --line: #dbe4ee;
+            --radius: 24px;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            color: var(--text);
+            background:
+                radial-gradient(circle at top left, rgba(43, 179, 163, 0.13), transparent 30rem),
+                linear-gradient(180deg, #ffffff 0%, var(--bg) 55%);
+        }
+
+        .shell {
+            width: min(1180px, calc(100% - 32px));
+            margin: 0 auto;
+            padding: 42px 0 56px;
+        }
+
+        .hero {
+            display: grid;
+            grid-template-columns: 1.25fr 0.75fr;
+            gap: 28px;
+            align-items: stretch;
+            padding: 44px;
+            color: white;
+            background: linear-gradient(135deg, rgba(15, 61, 94, 0.98), rgba(23, 107, 135, 0.92));
+            border-radius: 34px;
+            box-shadow: 0 24px 60px rgba(15, 61, 94, 0.14);
+        }
+
+        .eyebrow {
+            color: var(--accent);
+            font-size: 12px;
+            font-weight: 800;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            margin-bottom: 14px;
+        }
+
+        h1 {
+            margin: 0;
+            max-width: 760px;
+            font-size: clamp(40px, 7vw, 76px);
+            line-height: 0.96;
+            letter-spacing: -0.07em;
+        }
+
+        .lead {
+            max-width: 760px;
+            margin: 22px 0 0;
+            color: rgba(255, 255, 255, 0.78);
+            font-size: 18px;
+            line-height: 1.7;
+        }
+
+        .actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-top: 30px;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 50px;
+            padding: 0 18px;
+            border-radius: 999px;
+            font-weight: 800;
+            text-decoration: none;
+        }
+
+        .btn.primary {
+            background: white;
+            color: var(--blue);
+        }
+
+        .btn.secondary {
+            color: white;
+            border: 1px solid rgba(255, 255, 255, 0.34);
+        }
+
+        .side-card,
+        .module-card {
+            background: rgba(255, 255, 255, 0.96);
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            box-shadow: 0 14px 36px rgba(15, 61, 94, 0.08);
+        }
+
+        .side-card {
+            padding: 26px;
+            color: var(--text);
+        }
+
+        .side-card h2,
+        .module-card h2 {
+            margin: 0;
+            color: var(--blue);
+            letter-spacing: -0.04em;
+        }
+
+        .side-card p,
+        .module-card p,
+        li {
+            color: var(--muted);
+            line-height: 1.7;
+        }
+
+        .modules {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 22px;
+            margin-top: 26px;
+        }
+
+        .module-card {
+            padding: 28px;
+        }
+
+        ul {
+            margin: 16px 0 0;
+            padding-left: 20px;
+        }
+
+        @media (max-width: 860px) {
+            .hero,
+            .modules {
+                grid-template-columns: 1fr;
+            }
+
+            .hero {
+                padding: 28px;
+            }
+        }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>PESTEL ANALYTICS</h1>
-        <p>Le serveur Django est opérationnel.</p>
-        <p>Le dashboard interactif (Dash) est accessible sur le port 8050.</p>
-        <a href="http://localhost:8050" class="btn">Accéder au Dashboard Dash</a>
-    </div>
+    <main class="shell">
+        <section class="hero">
+            <div>
+                <div class="eyebrow">AaPROVIDIR Analytics</div>
+                <h1>Plateforme PESTEL des prix agricoles</h1>
+                <p class="lead">
+                    Ce projet analyse les prix des produits agricoles avec les facteurs politiques,
+                    économiques, sociaux, technologiques, environnementaux et légaux afin de faciliter
+                    l'exploration, la prévision et la recommandation opérationnelle.
+                </p>
+                <div class="actions">
+                    <a class="btn primary" href="http://localhost:8050/descriptif">Dashboard descriptif</a>
+                    <a class="btn secondary" href="http://localhost:8050/previsions">Prévisions & recommandations</a>
+                </div>
+            </div>
+            <aside class="side-card">
+                <h2>Modules disponibles</h2>
+                <p>
+                    Le serveur Django sert de page d'accueil principale. Les analyses interactives
+                    sont exposées par Dash sur le port 8050.
+                </p>
+                <ul>
+                    <li>Exploration EDA et conclusion automatique.</li>
+                    <li>Prévisions connectées aux modèles `.joblib` du dossier `models`.</li>
+                    <li>Interface épurée pour usage métier et analytique.</li>
+                </ul>
+            </aside>
+        </section>
+
+        <section class="modules">
+            <article class="module-card">
+                <h2>Dashboard descriptif</h2>
+                <p>
+                    Synthèse des prix, audit qualité, saisonnalité STL, corrélations PESTEL,
+                    segmentation, anomalies et conclusion narrative.
+                </p>
+            </article>
+            <article class="module-card">
+                <h2>Prévisions & recommandations</h2>
+                <p>
+                    Projection par produit et région, chargement des modèles `.joblib` et
+                    recommandations selon tendance, risques et facteurs prioritaires.
+                </p>
+            </article>
+        </section>
+    </main>
 </body>
 </html>

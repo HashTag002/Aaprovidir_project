@@ -224,6 +224,26 @@ a {
     border-bottom: 1px solid var(--ds-line);
 }
 
+.tabs-clean .tab,
+.dash-tab {
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+    min-height: 52px;
+    padding: 0.9rem 1rem !important;
+    color: var(--ds-muted) !important;
+    background: transparent !important;
+    border: 0 !important;
+    border-bottom: 3px solid transparent !important;
+    font-weight: 800;
+}
+
+.tabs-clean .tab--selected,
+.dash-tab.selected {
+    color: var(--ds-blue) !important;
+    border-bottom-color: var(--ds-accent) !important;
+}
+
 .nav-tabs .nav-link {
     border: 0 !important;
     color: var(--ds-muted) !important;

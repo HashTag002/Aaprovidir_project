@@ -100,4 +100,8 @@ Ajouter une experience applicative plus complete autour du projet PESTEL :
 - Dashboard descriptif : enrichi avec conclusion automatique.
 - Dashboard previsions : ajoute avec detection `.joblib`.
 - Style global : refondu.
-- Verification technique et test manuel : a executer apres cette mise a jour.
+- Verification technique : compilation Python, checks Django, tests Django et validation directe des composants Dash executes.
+- Verification modele `.joblib` : test temporaire realise avec un modele factice, puis modele supprime.
+- Verification manuelle : accueil, dashboard descriptif, onglet conclusion, onglets EDA et page previsions testes dans le navigateur.
+- Correction appliquee pendant la verification : remplacement des onglets Bootstrap par des onglets Dash natifs afin de garantir le declenchement des callbacks.
+- Correction appliquee au lanceur : ajout de `--noreload` au serveur Django pour eviter l'arret premature de `run.py`.

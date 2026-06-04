@@ -59,7 +59,7 @@ dash_cmd = [
     "from dashboard.dash_app import app; app.run(debug=False, port=8050, host='0.0.0.0')"
 ]
 
-django_cmd = [python_exe, "manage.py", "runserver", "0.0.0.0:8000"]
+django_cmd = [python_exe, "manage.py", "runserver", "0.0.0.0:8000", "--noreload"]
 
 dash_proc = subprocess.Popen(dash_cmd)
 django_proc = subprocess.Popen(django_cmd)

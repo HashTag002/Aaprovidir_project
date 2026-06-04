@@ -319,18 +319,18 @@ def layout_descriptif():
                             )
                         ),
                     ),
-                    dbc.Tabs(
+                    dcc.Tabs(
                         [
-                            dbc.Tab(label="SYNTHÈSE", tab_id="tab-metier"),
-                            dbc.Tab(label="AUDIT QUALITÉ", tab_id="tab-audit"),
-                            dbc.Tab(label="ANALYSE PRIX", tab_id="tab-prix"),
-                            dbc.Tab(label="FACTEURS PESTEL", tab_id="tab-correlations"),
-                            dbc.Tab(label="SEGMENTATION", tab_id="tab-clustering"),
-                            dbc.Tab(label="CHOCS ET ANOMALIES", tab_id="tab-anomalies"),
-                            dbc.Tab(label="CONCLUSION", tab_id="tab-conclusion"),
+                            dcc.Tab(label="SYNTHÈSE", value="tab-metier", className="dash-tab", selected_className="dash-tab selected"),
+                            dcc.Tab(label="AUDIT QUALITÉ", value="tab-audit", className="dash-tab", selected_className="dash-tab selected"),
+                            dcc.Tab(label="ANALYSE PRIX", value="tab-prix", className="dash-tab", selected_className="dash-tab selected"),
+                            dcc.Tab(label="FACTEURS PESTEL", value="tab-correlations", className="dash-tab", selected_className="dash-tab selected"),
+                            dcc.Tab(label="SEGMENTATION", value="tab-clustering", className="dash-tab", selected_className="dash-tab selected"),
+                            dcc.Tab(label="CHOCS ET ANOMALIES", value="tab-anomalies", className="dash-tab", selected_className="dash-tab selected"),
+                            dcc.Tab(label="CONCLUSION", value="tab-conclusion", className="dash-tab", selected_className="dash-tab selected"),
                         ],
                         id="tabs-main",
-                        active_tab="tab-metier",
+                        value="tab-metier",
                         className="tabs-clean",
                     ),
                     dcc.Loading(id="loading-content", type="circle", children=html.Div(id="tab-content")),
@@ -967,7 +967,7 @@ def update_region_options(produit_selected):
 @app.callback(
     Output("tab-content", "children"),
     [
-        Input("tabs-main", "active_tab"),
+        Input("tabs-main", "value"),
         Input("filter-produit", "value"),
         Input("filter-region", "value"),
         Input("filter-date", "start_date"),

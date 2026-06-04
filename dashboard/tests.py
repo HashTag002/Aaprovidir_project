@@ -47,3 +47,26 @@ class ForecastModelInputTests(SimpleTestCase):
         self.assertEqual(len(forecast_df), 3)
         self.assertIn("Prévision générée", message)
         self.assertNotIn("Repli indicatif", message)
+
+    def test_cluster_profile_respects_user_cluster_count(self):
+        profile, _ = dash_app.cluster_profile(dash_app.df_full, 3)
+
+        self.assertIn("Cluster", profile.columns)
+        self.assertLessEqual(profile["Cluster"].nunique(), 3)
+
+    def test_model_comparison_page_uses_loaded_model(self):
+        original_load_model = dash_app.load_model
+        original_model_files = dash_app.model_files
+
+        class FakeModelPath:
+            name = "regression_model.joblib"
+
+        try:
+            dash_app.load_model = lambda model_name: self.model
+            dash_app.model_files = lambda: [FakeModelPath()]
+            content = dash_app.layout_model_test_results("Maïs", "Centre", 20)
+        finally:
+            dash_app.load_model = original_load_model
+            dash_app.model_files = original_model_files
+
+        self.assertIsNotNone(content)

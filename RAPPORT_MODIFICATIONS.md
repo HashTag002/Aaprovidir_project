@@ -40,6 +40,17 @@ Ajouter une experience applicative plus complete autour du projet PESTEL :
   - le nombre d'anomalies liees aux chocs encodes ;
   - le cluster du produit ;
   - les features prioritaires recommandees.
+- Amelioration de la conclusion en synthese decisionnelle :
+  - diagnostic de tendance ;
+  - niveau de risque analytique ;
+  - signaux cles ;
+  - actions recommandees ;
+  - cartes de lecture rapide.
+- Amelioration de l'audit qualite avec score global, valeurs manquantes, doublons, couverture temporelle et graphe de completude toujours visible.
+- Amelioration de la segmentation :
+  - choix utilisateur du nombre de clusters KMeans ;
+  - PCA conservee pour la visualisation ;
+  - tableau de profil des clusters.
 
 ### 3. Dashboard previsions et recommandations
 
@@ -61,6 +72,15 @@ Ajouter une experience applicative plus complete autour du projet PESTEL :
   - les chocs recents ;
   - la variable PESTEL la plus associee au prix.
 - Si aucun modele `.joblib` n'est present, la page affiche une projection indicative et signale clairement l'absence de modele.
+- Correction de l'alignement des features pour les modeles sklearn sans noms de colonnes :
+  - exclusion des colonnes d'aide calculees par l'application comme `Score_Choc` ;
+  - utilisation du nombre de features attendu par le modele ;
+  - prevention du repli indicatif lorsque `regression_model.joblib` attend les 21 variables d'origine.
+- Ajout d'une page `Tests modeles` accessible via `http://localhost:8050/modeles` :
+  - evaluation des modeles `.joblib` charges ;
+  - comparaison avec une baseline `Prix_T-1` ;
+  - calcul MAE, RMSE, MAPE et R2 ;
+  - graphe prix reels vs previsions.
 
 ### 4. Style et ergonomie
 
@@ -86,6 +106,7 @@ Ajouter une experience applicative plus complete autour du projet PESTEL :
 - `run.py`
 - `models/.gitkeep`
 - `RAPPORT_MODIFICATIONS.md`
+- `dashboard/tests.py`
 
 ## Points a maintenir lors des prochaines modifications
 
@@ -105,3 +126,4 @@ Ajouter une experience applicative plus complete autour du projet PESTEL :
 - Verification manuelle : accueil, dashboard descriptif, onglet conclusion, onglets EDA et page previsions testes dans le navigateur.
 - Correction appliquee pendant la verification : remplacement des onglets Bootstrap par des onglets Dash natifs afin de garantir le declenchement des callbacks.
 - Correction appliquee au lanceur : ajout de `--noreload` au serveur Django pour eviter l'arret premature de `run.py`.
+- Nouvelle iteration : conclusion decisionnelle, audit qualite renforce, segmentation KMeans parametrable, correction du mismatch 21/22 features et page de test/comparaison des modeles.

@@ -31,6 +31,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_PATH = BASE_DIR / "data" / "Dataset.csv"
 MODELS_DIR = BASE_DIR / "models"
 TARGET_COL = "Prix_Vente_FCFA_kg"
+FORECAST_HELPER_COLUMNS = {"Score_Choc"}
 
 app = dash.Dash(
     __name__,
@@ -818,6 +819,41 @@ def baseline_forecast(df, horizon):
     return pd.DataFrame(rows), "Projection indicative sans modèle joblib disponible."
 
 
+def numeric_forecast_features(row):
+    return [
+        col
+        for col in row.index
+        if col != TARGET_COL and col not in FORECAST_HELPER_COLUMNS and pd.api.types.is_number(row[col])
+    ]
+
+
+def build_model_input(row, model):
+    feature_names = getattr(model, "feature_names_in_", None)
+    if feature_names is not None:
+        return pd.DataFrame([{feature: row.get(feature, 0) for feature in feature_names}])
+
+    expected_count = getattr(model, "n_features_in_", None)
+    default_features = numeric_forecast_features(row)
+    all_numeric_features = [
+        col for col in row.index if col != TARGET_COL and pd.api.types.is_number(row[col])
+    ]
+
+    if expected_count == len(default_features):
+        features = default_features
+    elif expected_count == len(all_numeric_features):
+        features = all_numeric_features
+    elif expected_count is None:
+        features = default_features
+    else:
+        raise ValueError(
+            f"schéma numérique incompatible : {len(default_features)} variables utiles "
+            f"({len(all_numeric_features)} avec colonnes calculées), modèle attendu {expected_count}. "
+            "Réentraîner avec noms de colonnes ou fournir un modèle aligné sur Dataset.csv."
+        )
+
+    return pd.DataFrame([[row[col] for col in features]])
+
+
 def model_forecast(df, horizon, model_name):
     model = load_model(model_name)
     if model is None:
@@ -826,7 +862,6 @@ def model_forecast(df, horizon, model_name):
     rows = []
     last_row = df.sort_values("Date").iloc[-1].copy()
     previous_price = float(last_row[TARGET_COL])
-    feature_names = getattr(model, "feature_names_in_", None)
 
     try:
         for step in range(1, horizon + 1):
@@ -840,16 +875,7 @@ def model_forecast(df, horizon, model_name):
             if "Saisonnalite_Cos" in row.index:
                 row["Saisonnalite_Cos"] = np.cos(2 * np.pi * future_date.month / 12)
 
-            if feature_names is not None:
-                x_pred = pd.DataFrame([{feature: row.get(feature, 0) for feature in feature_names}])
-            else:
-                numeric_cols = [
-                    col
-                    for col in row.index
-                    if col != TARGET_COL and pd.api.types.is_number(row[col])
-                ]
-                x_pred = pd.DataFrame([{col: row[col] for col in numeric_cols}])
-
+            x_pred = build_model_input(row, model)
             pred = float(np.ravel(model.predict(x_pred))[0])
             previous_price = pred
             rows.append({"Date": future_date, "Prévision": pred})

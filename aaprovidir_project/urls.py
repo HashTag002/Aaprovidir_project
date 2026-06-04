@@ -20,5 +20,6 @@ from dashboard.views import dashboard_index
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('', dashboard_index, name='home'),
     path('dashboard/', dashboard_index, name='dashboard_index'),
 ]

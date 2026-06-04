@@ -42,8 +42,10 @@ kill_process_on_port(8000)
 kill_process_on_port(8050)
 
 print()
-print(f"  ▶ Dash Dashboard  → http://localhost:8050")
-print(f"  ▶ Django App      → http://localhost:8000/dashboard/")
+print(f"  ▶ Accueil Dash          → http://localhost:8050")
+print(f"  ▶ Dashboard descriptif  → http://localhost:8050/descriptif")
+print(f"  ▶ Prévisions            → http://localhost:8050/previsions")
+print(f"  ▶ Accueil Django        → http://localhost:8000/")
 print()
 print("  Ctrl+C pour arrêter")
 print("=" * 60)
@@ -57,7 +59,7 @@ dash_cmd = [
     "from dashboard.dash_app import app; app.run(debug=False, port=8050, host='0.0.0.0')"
 ]
 
-django_cmd = [python_exe, "manage.py", "runserver", "0.0.0.0:8000"]
+django_cmd = [python_exe, "manage.py", "runserver", "0.0.0.0:8000", "--noreload"]
 
 dash_proc = subprocess.Popen(dash_cmd)
 django_proc = subprocess.Popen(django_cmd)

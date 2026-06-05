@@ -1,0 +1,67 @@
+[
+  {
+    "name": "baseline_prix_t_1",
+    "estimator_type": "Baseline naive Prix_T-1",
+    "status": "reference",
+    "path": null,
+    "cv_mae": null,
+    "holdout_mae": 199.4383860414395,
+    "holdout_rmse": 258.5235635942665,
+    "holdout_mape": 9.480948492756161,
+    "holdout_r2": 0.9746808431295418,
+    "beats_baseline": false,
+    "details": "Reference: prediction = Prix_T-1 sur le holdout temporel."
+  },
+  {
+    "name": "regression_model",
+    "estimator_type": "Regression lineaire multiple",
+    "status": "trained",
+    "path": "models/regression_model.joblib",
+    "cv_mae": 79.94259502970347,
+    "holdout_mae": 145.76100816034844,
+    "holdout_rmse": 227.7460700995416,
+    "holdout_mape": 6.848007474308025,
+    "holdout_r2": 0.9803505338638601,
+    "beats_baseline": true,
+    "details": "{}"
+  },
+  {
+    "name": "random_forest_model",
+    "estimator_type": "Random Forest avec optimisation grille",
+    "status": "trained",
+    "path": "models/random_forest_model.joblib",
+    "cv_mae": 60.866563673815584,
+    "holdout_mae": 282.4212104689204,
+    "holdout_rmse": 900.8206222657947,
+    "holdout_mape": 7.468715659495095,
+    "holdout_r2": 0.6925846057382942,
+    "beats_baseline": false,
+    "details": "{\"model__max_depth\": null, \"model__min_samples_leaf\": 1, \"model__n_estimators\": 120}"
+  },
+  {
+    "name": "xgboost_model",
+    "estimator_type": "XGBoost avec optimisation grille",
+    "status": "trained",
+    "path": "models/xgboost_model.joblib",
+    "cv_mae": 59.74733352661133,
+    "holdout_mae": 292.8991989585019,
+    "holdout_rmse": 932.7812067161876,
+    "holdout_mape": 7.84803013921002,
+    "holdout_r2": 0.6703838009568652,
+    "beats_baseline": false,
+    "details": "{\"model__learning_rate\": 0.05, \"model__max_depth\": 3, \"model__n_estimators\": 160}"
+  },
+  {
+    "name": "lstm_model",
+    "estimator_type": "LSTM TensorFlow",
+    "status": "trained",
+    "path": "models/lstm_model.keras",
+    "cv_mae": null,
+    "holdout_mae": 1189.4546560359272,
+    "holdout_rmse": 1934.769128732772,
+    "holdout_mape": 54.90551050895196,
+    "holdout_r2": -0.4181013494108068,
+    "beats_baseline": false,
+    "details": "preprocessor=models/lstm_preprocessor.joblib"
+  }
+]

@@ -1,0 +1,6 @@
+name,estimator_type,status,path,cv_mae,holdout_mae,holdout_rmse,holdout_mape,holdout_r2,beats_baseline,details
+baseline_prix_t_1,Baseline naive Prix_T-1,reference,,,199.4383860414395,258.5235635942665,9.480948492756161,0.9746808431295418,False,Reference: prediction = Prix_T-1 sur le holdout temporel.
+regression_model,Regression lineaire multiple,trained,models/regression_model.joblib,79.94259502970347,145.76100816034844,227.7460700995416,6.848007474308025,0.9803505338638601,True,{}
+random_forest_model,Random Forest avec optimisation grille,trained,models/random_forest_model.joblib,60.866563673815584,282.4212104689204,900.8206222657947,7.468715659495095,0.6925846057382942,False,"{""model__max_depth"": null, ""model__min_samples_leaf"": 1, ""model__n_estimators"": 120}"
+xgboost_model,XGBoost avec optimisation grille,trained,models/xgboost_model.joblib,59.74733352661133,292.8991989585019,932.7812067161876,7.84803013921002,0.6703838009568652,False,"{""model__learning_rate"": 0.05, ""model__max_depth"": 3, ""model__n_estimators"": 160}"
+lstm_model,LSTM TensorFlow,trained,models/lstm_model.keras,,1189.4546560359272,1934.769128732772,54.90551050895196,-0.4181013494108068,False,preprocessor=models/lstm_preprocessor.joblib

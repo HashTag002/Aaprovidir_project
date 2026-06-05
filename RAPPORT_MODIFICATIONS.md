@@ -127,3 +127,50 @@ Ajouter une experience applicative plus complete autour du projet PESTEL :
 - Correction appliquee pendant la verification : remplacement des onglets Bootstrap par des onglets Dash natifs afin de garantir le declenchement des callbacks.
 - Correction appliquee au lanceur : ajout de `--noreload` au serveur Django pour eviter l'arret premature de `run.py`.
 - Nouvelle iteration : conclusion decisionnelle, audit qualite renforce, segmentation KMeans parametrable, correction du mismatch 21/22 features et page de test/comparaison des modeles.
+
+## Iteration modelisation avancee
+
+### Dossier d'etude des modeles
+
+- Ajout du dossier `modeling/`.
+- Ajout du fichier `modeling/model_study.py` pour entrainer et comparer :
+  - regression lineaire multiple ;
+  - Random Forest ;
+  - XGBoost ;
+  - LSTM TensorFlow.
+- Ajout d'une validation temporelle :
+  - split holdout temporel ;
+  - baseline `Prix_T-1` ;
+  - `TimeSeriesSplit` pour la cross validation ;
+  - `GridSearchCV` pour optimiser Random Forest et XGBoost.
+- Sauvegarde des resultats dans `models/` :
+  - `regression_model.joblib` ;
+  - `random_forest_model.joblib` ;
+  - `xgboost_model.joblib` ;
+  - `best_model.joblib` ;
+  - `lstm_model.keras` ;
+  - `lstm_preprocessor.joblib` ;
+  - `model_study_metrics.csv` ;
+  - `model_study_results.json` ;
+  - `best_model_metadata.json`.
+
+### Resultats de l'entrainement rapide
+
+- Baseline `Prix_T-1` : MAE holdout 199.44.
+- Regression lineaire multiple : MAE holdout 145.76, meilleur modele `.joblib` et modele retenu comme `best_model.joblib`.
+- Random Forest : MAE holdout 282.42, conserve pour comparaison mais moins performant que la baseline.
+- XGBoost : MAE holdout 292.90, conserve pour comparaison mais moins performant que la baseline.
+- LSTM : MAE holdout 1189.45 en entrainement rapide CPU, conserve comme prototype sequence mais non retenu comme meilleur modele.
+
+### Problemes rencontres et resolutions
+
+- Probleme : `xgboost` et `tensorflow` etaient absents de l'environnement.
+  - Resolution : installation des dependances et ajout dans `requirements.txt`.
+- Probleme : TensorFlow signale l'absence de GPU/CUDA.
+  - Resolution : entrainement LSTM effectue sur CPU ; les logs CUDA sont non bloquants.
+- Probleme : les modeles sklearn sans noms de colonnes peuvent recevoir 22 features a cause de `Score_Choc`, colonne calculee par l'application.
+  - Resolution : exclusion des colonnes d'aide dans la preparation des features et validation par tests.
+- Probleme : `lstm_preprocessor.joblib` apparaissait comme modele dans le dashboard.
+  - Resolution : filtrage des fichiers `*_preprocessor.joblib` dans la detection des modeles.
+- Probleme : Random Forest, XGBoost et LSTM ne battent pas la baseline sur l'entrainement rapide.
+  - Resolution : conservation des metriques pour analyse, sauvegarde du meilleur modele `.joblib`, et script parametrable pour relancer une recherche plus longue sans `--quick`.

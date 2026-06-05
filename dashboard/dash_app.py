@@ -7,11 +7,12 @@ import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from dash import Input, Output, dcc, html
+from dash import Input, Output, dcc, dash_table, html
 from plotly.subplots import make_subplots
 from scipy import stats
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.preprocessing import StandardScaler
 from statsmodels.tsa.seasonal import STL
 
@@ -31,6 +32,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_PATH = BASE_DIR / "data" / "Dataset.csv"
 MODELS_DIR = BASE_DIR / "models"
 TARGET_COL = "Prix_Vente_FCFA_kg"
+FORECAST_HELPER_COLUMNS = {"Score_Choc"}
 
 app = dash.Dash(
     __name__,
@@ -98,6 +100,7 @@ def top_nav(active="home"):
                         nav_link("Accueil", "/", active == "home"),
                         nav_link("Dashboard descriptif", "/descriptif", active == "descriptif"),
                         nav_link("Prévisions", "/previsions", active == "previsions"),
+                        nav_link("Tests modèles", "/modeles", active == "modeles"),
                     ],
                 ),
             ],
@@ -198,6 +201,7 @@ def layout_home():
                                         children=[
                                             dcc.Link("Ouvrir le dashboard descriptif", href="/descriptif", className="btn-primary-clean"),
                                             dcc.Link("Voir les prévisions", href="/previsions", className="btn-secondary-clean"),
+                                            dcc.Link("Tester les modèles", href="/modeles", className="btn-secondary-clean"),
                                         ],
                                     ),
                                 ],
@@ -244,6 +248,20 @@ def layout_home():
                                 ),
                                 lg=6,
                             ),
+                            dbc.Col(
+                                section_card(
+                                    "Tests et comparaison des modèles",
+                                    html.Ul(
+                                        [
+                                            html.Li("Évaluation automatique des modèles `.joblib` chargés."),
+                                            html.Li("Comparaison MAE, RMSE, MAPE et R² sur les données historiques."),
+                                            html.Li("Baseline naïve pour contrôler la valeur ajoutée du modèle."),
+                                        ],
+                                        className="clean-list",
+                                    ),
+                                ),
+                                lg=12,
+                            ),
                         ],
                     ),
                 ],
@@ -272,51 +290,68 @@ def layout_descriptif():
                     dbc.Card(
                         className="filter-card",
                         children=dbc.CardBody(
-                            dbc.Row(
-                                [
-                                    dbc.Col(
-                                        [
-                                            html.Label("PRODUIT", className="filter-label"),
-                                            dcc.Dropdown(
-                                                id="filter-produit",
-                                                options=[{"label": p, "value": p} for p in available_products()],
-                                                value=product,
-                                                clearable=False,
-                                            ),
-                                        ],
-                                        lg=3,
-                                        md=6,
-                                        className="mb-3 mb-lg-0",
-                                    ),
-                                    dbc.Col(
-                                        [
-                                            html.Label("RÉGION DE VENTE", className="filter-label"),
-                                            dcc.Dropdown(id="filter-region", options=[], clearable=False),
-                                        ],
-                                        lg=3,
-                                        md=6,
-                                        className="mb-3 mb-lg-0",
-                                    ),
-                                    dbc.Col(
-                                        [
-                                            html.Label("PLAGE TEMPORELLE", className="filter-label"),
-                                            html.Div(
-                                                dcc.DatePickerRange(
-                                                    id="filter-date",
-                                                    min_date_allowed=min_date,
-                                                    max_date_allowed=max_date,
-                                                    start_date=min_date,
-                                                    end_date=max_date,
-                                                    display_format="MMM YYYY",
+                            [
+                                dbc.Row(
+                                    [
+                                        dbc.Col(
+                                            [
+                                                html.Label("PRODUIT", className="filter-label"),
+                                                dcc.Dropdown(
+                                                    id="filter-produit",
+                                                    options=[{"label": p, "value": p} for p in available_products()],
+                                                    value=product,
+                                                    clearable=False,
                                                 ),
-                                                className="date-wrapper",
-                                            ),
-                                        ],
-                                        lg=6,
-                                        md=12,
-                                    ),
-                                ]
-                            )
+                                            ],
+                                            lg=3,
+                                            md=6,
+                                            className="mb-3 mb-lg-0",
+                                        ),
+                                        dbc.Col(
+                                            [
+                                                html.Label("RÉGION DE VENTE", className="filter-label"),
+                                                dcc.Dropdown(id="filter-region", options=[], clearable=False),
+                                            ],
+                                            lg=3,
+                                            md=6,
+                                            className="mb-3 mb-lg-0",
+                                        ),
+                                        dbc.Col(
+                                            [
+                                                html.Label("PLAGE TEMPORELLE", className="filter-label"),
+                                                html.Div(
+                                                    dcc.DatePickerRange(
+                                                        id="filter-date",
+                                                        min_date_allowed=min_date,
+                                                        max_date_allowed=max_date,
+                                                        start_date=min_date,
+                                                        end_date=max_date,
+                                                        display_format="MMM YYYY",
+                                                    ),
+                                                    className="date-wrapper",
+                                                ),
+                                            ],
+                                            lg=6,
+                                            md=12,
+                                        ),
+                                    ]
+                                ),
+                                html.Div(
+                                    [
+                                        html.Label("NOMBRE DE CLUSTERS KMEANS", className="filter-label mt-4"),
+                                        dcc.Slider(
+                                            id="cluster-count",
+                                            min=2,
+                                            max=min(10, max(2, len(available_products()))),
+                                            step=1,
+                                            value=5,
+                                            marks={i: str(i) for i in range(2, min(10, max(2, len(available_products()))) + 1)},
+                                            tooltip={"placement": "bottom", "always_visible": False},
+                                        ),
+                                    ],
+                                    className="cluster-control",
+                                ),
+                            ]
                         ),
                     ),
                     dcc.Tabs(
@@ -387,18 +422,26 @@ def layout_audit(df):
     null_pct = (null_count / len(df) * 100).reset_index()
     null_pct.columns = ["Variable", "Pct_Null"]
     null_pct["Status"] = null_pct["Pct_Null"].apply(lambda x: "Incomplet" if x > 0 else "Complet")
+    null_pct["Affichage"] = null_pct["Pct_Null"].where(null_pct["Pct_Null"] > 0, 0.4)
 
     fig_null = px.bar(
         null_pct,
-        x="Pct_Null",
+        x="Affichage",
         y="Variable",
         orientation="h",
         title="Analyse de complétude (%)",
-        labels={"Pct_Null": "% manquant"},
+        labels={"Affichage": "% manquant"},
         color="Status",
         color_discrete_map={"Complet": DS_ACCENT, "Incomplet": DS_DANGER},
+        text=null_pct["Pct_Null"].map(lambda value: f"{value:.1f}%"),
     )
-    fig_null.update_layout(yaxis={"categoryorder": "total ascending"}, plot_bgcolor="white")
+    fig_null.update_traces(textposition="outside", cliponaxis=False)
+    fig_null.update_layout(
+        yaxis={"categoryorder": "total ascending"},
+        xaxis=dict(range=[0, max(5, float(null_pct["Pct_Null"].max()) + 5)], ticksuffix="%"),
+        plot_bgcolor="white",
+        margin=dict(l=20, r=55, t=60, b=20),
+    )
 
     fig_types = px.pie(
         names=["Numérique", "Catégorie", "Date"],
@@ -411,13 +454,31 @@ def layout_audit(df):
         hole=0.45,
         color_discrete_sequence=[DS_BLUE_LIGHT, DS_ACCENT, "#cbd5e1"],
     )
+    completeness_score = max(0, 100 - float(null_pct["Pct_Null"].mean()))
+    duplicate_rows = int(df.duplicated().sum())
+    expected_months = max(1, len(pd.period_range(df["Date"].min(), df["Date"].max(), freq="M")))
+    observed_months = int(df["Date"].dt.to_period("M").nunique())
+    coverage = observed_months / expected_months * 100
 
-    return dbc.Row(
+    return html.Div(
         [
-            dbc.Col(graph_card("Complétude", fig_null), lg=7),
-            dbc.Col(graph_card("Types de variables", fig_types), lg=5),
-        ],
-        className="g-4",
+            dbc.Row(
+                [
+                    dbc.Col(kpi_card("Score qualité", f"{completeness_score:.1f} %", DS_ACCENT), lg=3, md=6),
+                    dbc.Col(kpi_card("Valeurs manquantes", int(null_count.sum()), DS_BLUE_LIGHT), lg=3, md=6),
+                    dbc.Col(kpi_card("Doublons", duplicate_rows, DS_WARNING if duplicate_rows else DS_SUCCESS), lg=3, md=6),
+                    dbc.Col(kpi_card("Couverture mensuelle", f"{coverage:.0f} %", DS_BLUE), lg=3, md=6),
+                ],
+                className="g-4 mb-4",
+            ),
+            dbc.Row(
+                [
+                    dbc.Col(graph_card("Complétude par variable", fig_null, "Les variables à 0 % sont affichées avec une barre minimale pour rester visibles."), lg=7),
+                    dbc.Col(graph_card("Types de variables", fig_types, "Répartition des colonnes utilisées par les analyses."), lg=5),
+                ],
+                className="g-4",
+            ),
+        ]
     )
 
 
@@ -500,7 +561,7 @@ def layout_correlations(df):
     )
 
 
-def cluster_profile(full_df):
+def cluster_profile(full_df, n_clusters=5):
     features = [
         "Prix_Vente_FCFA_kg",
         "Pertes_PostRecolte_Pct",
@@ -518,7 +579,7 @@ def cluster_profile(full_df):
 
     scaler = StandardScaler()
     x_scaled = scaler.fit_transform(profil)
-    n_clusters = min(5, len(profil))
+    n_clusters = max(2, min(int(n_clusters or 5), len(profil)))
     km = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
     profil["Cluster"] = km.fit_predict(x_scaled)
 
@@ -528,8 +589,8 @@ def cluster_profile(full_df):
     return profil, features
 
 
-def layout_clustering(full_df):
-    profil, _ = cluster_profile(full_df)
+def layout_clustering(full_df, n_clusters=5):
+    profil, features = cluster_profile(full_df, n_clusters)
     if profil.empty:
         return empty_state("Segmentation indisponible", "Le volume de données ne permet pas de calculer les clusters.")
 
@@ -539,12 +600,47 @@ def layout_clustering(full_df):
         y="PC2",
         color="Cluster",
         text="Produit_ID",
-        title="Segmentation PCA des filières",
+        title=f"Segmentation PCA des filières - {int(n_clusters)} clusters KMeans",
         color_continuous_scale="Viridis",
     )
     fig_pca.update_traces(textposition="top center", marker=dict(size=12, line=dict(width=1, color="white")))
     fig_pca.update_layout(plot_bgcolor="white")
-    return graph_card("Segmentation des produits", fig_pca, "Regroupement des filières selon leurs profils prix, chocs, coûts et production.")
+    cluster_summary = (
+        profil.reset_index()
+        .groupby("Cluster")
+        .agg(
+            Produits=("Produit_ID", "count"),
+            Prix_moyen=(TARGET_COL, "mean"),
+            Risque_choc=("Score_Choc", "mean"),
+            Cout_transport=("Cout_Transport", "mean"),
+        )
+        .reset_index()
+        .round(2)
+    )
+
+    return html.Div(
+        [
+            graph_card(
+                "Segmentation des produits",
+                fig_pca,
+                f"Regroupement KMeans sur {len(features)} variables standardisées, projeté en 2 dimensions par PCA.",
+            ),
+            section_card(
+                "Profil des clusters",
+                dash_table.DataTable(
+                    data=cluster_summary.to_dict("records"),
+                    columns=[{"name": col.replace("_", " "), "id": col} for col in cluster_summary.columns],
+                    page_size=10,
+                    sort_action="native",
+                    style_table={"overflowX": "auto"},
+                    style_cell={"fontFamily": "Inter", "padding": "10px", "textAlign": "left"},
+                    style_header={"fontWeight": "800", "backgroundColor": "#f8fafc"},
+                ),
+                "Synthèse métier des groupes calculés avec le nombre de clusters choisi.",
+            ),
+        ],
+        className="stacked-content",
+    )
 
 
 def detect_anomalies(df):
@@ -602,8 +698,8 @@ def layout_anomalies(df):
     )
 
 
-def cluster_description(produit):
-    profil, features = cluster_profile(df_full)
+def cluster_description(produit, n_clusters=5):
+    profil, features = cluster_profile(df_full, n_clusters)
     if profil.empty or produit not in profil.index:
         return "N/A", "profil non disponible"
 
@@ -638,7 +734,7 @@ def stl_status(df):
         return "une saisonnalité STL non confirmée sur la fenêtre filtrée"
 
 
-def layout_conclusion(df, produit, region):
+def layout_conclusion(df, produit, region, cluster_count=5):
     corr_prix, _ = get_price_correlations(df)
     if corr_prix.empty:
         top_corr = "aucune variable exploitable"
@@ -653,8 +749,28 @@ def layout_conclusion(df, produit, region):
     anomalies = detect_anomalies(df)
     choc_cols = [c for c in df.columns if c.startswith("Choc_")]
     n_choc = int((anomalies[choc_cols].sum(axis=1) > 0).sum()) if not anomalies.empty and choc_cols else 0
-    cluster_id, cluster_desc = cluster_description(produit)
+    cluster_id, cluster_desc = cluster_description(produit, cluster_count)
     corr_text = "N/A" if pd.isna(r_val) else f"{r_val:.2f}"
+    price_start = float(df[TARGET_COL].iloc[0])
+    price_end = float(df[TARGET_COL].iloc[-1])
+    trend_pct = ((price_end - price_start) / price_start * 100) if price_start else 0
+    recent_shock = float(df.tail(6)["Score_Choc"].mean()) if "Score_Choc" in df else 0
+    volatility_ratio = float(df[TARGET_COL].std() / df[TARGET_COL].mean() * 100) if df[TARGET_COL].mean() else 0
+
+    if abs(trend_pct) < 5:
+        trend_label = "stabilité relative"
+    elif trend_pct > 0:
+        trend_label = "pression haussière"
+    else:
+        trend_label = "détente des prix"
+
+    risk_score = 0
+    risk_score += 1 if abs(trend_pct) >= 25 else 0
+    risk_score += 1 if volatility_ratio >= 30 else 0
+    risk_score += 1 if recent_shock >= 1 else 0
+    risk_score += 1 if len(anomalies) >= max(3, len(df) * 0.04) else 0
+    risk_label = ["Faible", "Modéré", "Élevé", "Critique", "Critique"][risk_score]
+    risk_color = [DS_SUCCESS, DS_ACCENT, DS_WARNING, DS_DANGER, DS_DANGER][risk_score]
 
     bullets = [
         f"Une corrélation de {corr_text} avec {top_corr} (variable la plus influente).",
@@ -662,30 +778,66 @@ def layout_conclusion(df, produit, region):
         f"{len(anomalies)} anomalies détectées, dont {n_choc} liées aux chocs encodés.",
         f"Une appartenance au cluster {cluster_id} ({cluster_desc}).",
     ]
+    actions = [
+        f"Prioriser le suivi de {top_corr} et des variables proches dans les prochains modèles.",
+        "Conserver la saisonnalité mensuelle dans les features, car elle structure la dynamique observée.",
+        "Contrôler les observations anormales avant entraînement pour éviter de sur-apprendre les chocs extrêmes.",
+    ]
+    if risk_score >= 2:
+        actions.insert(0, "Mettre cette combinaison produit-région sous surveillance renforcée.")
+    else:
+        actions.insert(0, "Maintenir une veille standard avec suivi mensuel des indicateurs clés.")
 
     return html.Div(
         [
+            dbc.Row(
+                className="g-4 mb-4",
+                children=[
+                    dbc.Col(kpi_card("Diagnostic", trend_label, DS_BLUE_LIGHT, f"{trend_pct:+.1f} % sur la période"), lg=3, md=6),
+                    dbc.Col(kpi_card("Risque analytique", risk_label, risk_color, f"Volatilité {volatility_ratio:.1f} %"), lg=3, md=6),
+                    dbc.Col(kpi_card("Variable dominante", top_corr, DS_ACCENT, f"r = {corr_text}"), lg=3, md=6),
+                    dbc.Col(kpi_card("Cluster", cluster_id, DS_BLUE, cluster_desc), lg=3, md=6),
+                ],
+            ),
             section_card(
-                "Conclusion automatique",
+                "Conclusion décisionnelle automatique",
                 html.Div(
                     [
                         html.P(
                             f"Sur la période {annees[0]}-{annees[1]}, le prix de la {produit} dans la région {region} présente :",
                             className="conclusion-intro",
                         ),
-                        html.Ul([html.Li(item) for item in bullets], className="conclusion-list"),
+                        dbc.Row(
+                            className="g-4",
+                            children=[
+                                dbc.Col(
+                                    [
+                                        html.Div("Signaux clés", className="mini-heading"),
+                                        html.Ul([html.Li(item) for item in bullets], className="conclusion-list"),
+                                    ],
+                                    lg=6,
+                                ),
+                                dbc.Col(
+                                    [
+                                        html.Div("Actions recommandées", className="mini-heading"),
+                                        html.Ul([html.Li(item) for item in actions], className="conclusion-list"),
+                                    ],
+                                    lg=6,
+                                ),
+                            ],
+                        ),
                         html.Div(f"Features prioritaires recommandées : {top_features}.", className="feature-callout"),
                     ],
                     className="conclusion-box",
                 ),
-                "Résumé narratif généré à partir des corrélations, de la saisonnalité, des anomalies et de la segmentation.",
+                "Synthèse générée à partir des corrélations, de la saisonnalité, des anomalies, des chocs et du clustering.",
             ),
             dbc.Row(
                 className="g-4 mt-1",
                 children=[
-                    dbc.Col(kpi_card("Variable dominante", top_corr, DS_BLUE_LIGHT), lg=4),
-                    dbc.Col(kpi_card("Anomalies", len(anomalies), DS_DANGER), lg=4),
-                    dbc.Col(kpi_card("Cluster", cluster_id, DS_ACCENT, cluster_desc), lg=4),
+                    dbc.Col(kpi_card("Prix initial", format_money(price_start)), lg=4),
+                    dbc.Col(kpi_card("Prix final", format_money(price_end), DS_ACCENT), lg=4),
+                    dbc.Col(kpi_card("Anomalies", len(anomalies), DS_DANGER, f"{n_choc} avec choc encodé"), lg=4),
                 ],
             ),
         ]
@@ -818,6 +970,41 @@ def baseline_forecast(df, horizon):
     return pd.DataFrame(rows), "Projection indicative sans modèle joblib disponible."
 
 
+def numeric_forecast_features(row):
+    return [
+        col
+        for col in row.index
+        if col != TARGET_COL and col not in FORECAST_HELPER_COLUMNS and pd.api.types.is_number(row[col])
+    ]
+
+
+def build_model_input(row, model):
+    feature_names = getattr(model, "feature_names_in_", None)
+    if feature_names is not None:
+        return pd.DataFrame([{feature: row.get(feature, 0) for feature in feature_names}])
+
+    expected_count = getattr(model, "n_features_in_", None)
+    default_features = numeric_forecast_features(row)
+    all_numeric_features = [
+        col for col in row.index if col != TARGET_COL and pd.api.types.is_number(row[col])
+    ]
+
+    if expected_count == len(default_features):
+        features = default_features
+    elif expected_count == len(all_numeric_features):
+        features = all_numeric_features
+    elif expected_count is None:
+        features = default_features
+    else:
+        raise ValueError(
+            f"schéma numérique incompatible : {len(default_features)} variables utiles "
+            f"({len(all_numeric_features)} avec colonnes calculées), modèle attendu {expected_count}. "
+            "Réentraîner avec noms de colonnes ou fournir un modèle aligné sur Dataset.csv."
+        )
+
+    return np.asarray([[row[col] for col in features]], dtype=float)
+
+
 def model_forecast(df, horizon, model_name):
     model = load_model(model_name)
     if model is None:
@@ -826,7 +1013,6 @@ def model_forecast(df, horizon, model_name):
     rows = []
     last_row = df.sort_values("Date").iloc[-1].copy()
     previous_price = float(last_row[TARGET_COL])
-    feature_names = getattr(model, "feature_names_in_", None)
 
     try:
         for step in range(1, horizon + 1):
@@ -840,16 +1026,7 @@ def model_forecast(df, horizon, model_name):
             if "Saisonnalite_Cos" in row.index:
                 row["Saisonnalite_Cos"] = np.cos(2 * np.pi * future_date.month / 12)
 
-            if feature_names is not None:
-                x_pred = pd.DataFrame([{feature: row.get(feature, 0) for feature in feature_names}])
-            else:
-                numeric_cols = [
-                    col
-                    for col in row.index
-                    if col != TARGET_COL and pd.api.types.is_number(row[col])
-                ]
-                x_pred = pd.DataFrame([{col: row[col] for col in numeric_cols}])
-
+            x_pred = build_model_input(row, model)
             pred = float(np.ravel(model.predict(x_pred))[0])
             previous_price = pred
             rows.append({"Date": future_date, "Prévision": pred})
@@ -931,6 +1108,240 @@ def layout_forecast_result(produit, region, model_name, horizon):
     )
 
 
+# --- MODEL TESTING ---------------------------------------------------------
+def layout_model_tests():
+    product = default_product()
+    models = model_files()
+
+    return html.Div(
+        [
+            top_nav("modeles"),
+            dbc.Container(
+                fluid=True,
+                className="main-shell",
+                children=[
+                    page_header(
+                        "Tests et comparaison des modèles",
+                        "Contrôle des modèles `.joblib` sur les données historiques",
+                        "Évaluez les modèles chargés dans `models/` sur un jeu de test temporel et comparez-les à une baseline naïve.",
+                    ),
+                    dbc.Card(
+                        className="filter-card",
+                        children=dbc.CardBody(
+                            dbc.Row(
+                                [
+                                    dbc.Col(
+                                        [
+                                            html.Label("PRODUIT", className="filter-label"),
+                                            dcc.Dropdown(
+                                                id="model-test-produit",
+                                                options=[{"label": p, "value": p} for p in available_products()],
+                                                value=product,
+                                                clearable=False,
+                                            ),
+                                        ],
+                                        lg=3,
+                                        md=6,
+                                    ),
+                                    dbc.Col(
+                                        [
+                                            html.Label("RÉGION", className="filter-label"),
+                                            dcc.Dropdown(id="model-test-region", options=[], clearable=False),
+                                        ],
+                                        lg=3,
+                                        md=6,
+                                    ),
+                                    dbc.Col(
+                                        [
+                                            html.Label("TAILLE DU TEST TEMPOREL", className="filter-label"),
+                                            dcc.Slider(
+                                                id="model-test-ratio",
+                                                min=10,
+                                                max=40,
+                                                step=5,
+                                                value=20,
+                                                marks={10: "10%", 20: "20%", 30: "30%", 40: "40%"},
+                                                tooltip={"placement": "bottom", "always_visible": False},
+                                            ),
+                                        ],
+                                        lg=6,
+                                        md=12,
+                                    ),
+                                ],
+                                className="g-3",
+                            )
+                        ),
+                    ),
+                    dcc.Loading(id="loading-model-tests", type="circle", children=html.Div(id="model-test-content")),
+                    html.Div(
+                        f"{len(models)} modèle(s) `.joblib` détecté(s) dans `models/`.",
+                        className="model-count-note",
+                    ),
+                ],
+            ),
+        ]
+    )
+
+
+def metric_summary(y_true, y_pred):
+    y_true = np.asarray(y_true, dtype=float)
+    y_pred = np.asarray(y_pred, dtype=float)
+    non_zero = y_true != 0
+    mape = np.mean(np.abs((y_true[non_zero] - y_pred[non_zero]) / y_true[non_zero])) * 100 if non_zero.any() else np.nan
+    return {
+        "MAE": mean_absolute_error(y_true, y_pred),
+        "RMSE": float(np.sqrt(mean_squared_error(y_true, y_pred))),
+        "MAPE": mape,
+        "R2": r2_score(y_true, y_pred) if len(y_true) > 1 else np.nan,
+    }
+
+
+def split_train_test(df, test_ratio):
+    df = df.sort_values("Date").copy()
+    test_size = max(6, int(len(df) * (test_ratio or 20) / 100))
+    test_size = min(test_size, max(1, len(df) - 6))
+    return df.iloc[:-test_size], df.iloc[-test_size:]
+
+
+def evaluate_loaded_model(df, model_name, test_ratio):
+    _, test_df = split_train_test(df, test_ratio)
+    model = load_model(model_name)
+    predictions = []
+
+    for _, row in test_df.iterrows():
+        x_pred = build_model_input(row.copy(), model)
+        predictions.append(float(np.ravel(model.predict(x_pred))[0]))
+
+    metrics = metric_summary(test_df[TARGET_COL], predictions)
+    return {
+        "model": model_name,
+        "status": "OK",
+        "metrics": metrics,
+        "predictions": pd.DataFrame(
+            {
+                "Date": test_df["Date"].values,
+                "Prix réel": test_df[TARGET_COL].values,
+                "Prévision": predictions,
+                "Modèle": model_name,
+            }
+        ),
+    }
+
+
+def evaluate_baseline(df, test_ratio):
+    train_df, test_df = split_train_test(df, test_ratio)
+    if "Prix_T-1" in test_df:
+        predictions = test_df["Prix_T-1"].astype(float).values
+    else:
+        predictions = np.repeat(float(train_df[TARGET_COL].iloc[-1]), len(test_df))
+
+    metrics = metric_summary(test_df[TARGET_COL], predictions)
+    return {
+        "model": "Baseline Prix_T-1",
+        "status": "Référence",
+        "metrics": metrics,
+        "predictions": pd.DataFrame(
+            {
+                "Date": test_df["Date"].values,
+                "Prix réel": test_df[TARGET_COL].values,
+                "Prévision": predictions,
+                "Modèle": "Baseline Prix_T-1",
+            }
+        ),
+    }
+
+
+def layout_model_test_results(produit, region, test_ratio):
+    df = df_full[(df_full["Produit_ID"] == produit) & (df_full["Region_Vente"] == region)].sort_values("Date").copy()
+    if df.empty:
+        return empty_state("Test indisponible", "Aucune donnée disponible pour cette combinaison produit-région.")
+    if len(df) < 12:
+        return empty_state("Historique insuffisant", "Il faut au moins 12 observations pour créer un jeu de test temporel fiable.")
+
+    evaluations = [evaluate_baseline(df, test_ratio)]
+    error_rows = []
+    for model_path in model_files():
+        try:
+            evaluations.append(evaluate_loaded_model(df, model_path.name, test_ratio))
+        except Exception as exc:
+            error_rows.append({"Modèle": model_path.name, "Statut": f"Erreur : {exc}"})
+
+    metric_rows = []
+    prediction_frames = []
+    for evaluation in evaluations:
+        row = {
+            "Modèle": evaluation["model"],
+            "Statut": evaluation["status"],
+            "MAE": round(evaluation["metrics"]["MAE"], 2),
+            "RMSE": round(evaluation["metrics"]["RMSE"], 2),
+            "MAPE (%)": round(evaluation["metrics"]["MAPE"], 2) if not pd.isna(evaluation["metrics"]["MAPE"]) else None,
+            "R²": round(evaluation["metrics"]["R2"], 3) if not pd.isna(evaluation["metrics"]["R2"]) else None,
+        }
+        metric_rows.append(row)
+        prediction_frames.append(evaluation["predictions"])
+
+    metrics_df = pd.DataFrame(metric_rows).sort_values("MAE")
+    best_model = metrics_df.iloc[0]["Modèle"]
+    predictions_df = pd.concat(prediction_frames, ignore_index=True)
+    test_dates = predictions_df["Date"].sort_values().unique()
+    actual_df = predictions_df[predictions_df["Modèle"] == "Baseline Prix_T-1"].copy()
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=actual_df["Date"],
+            y=actual_df["Prix réel"],
+            mode="lines+markers",
+            name="Prix réel",
+            line=dict(color=DS_BLUE, width=3),
+        )
+    )
+    for model_name, sub in predictions_df.groupby("Modèle"):
+        fig.add_trace(
+            go.Scatter(
+                x=sub["Date"],
+                y=sub["Prévision"],
+                mode="lines+markers",
+                name=model_name,
+                line=dict(width=2, dash="dash" if model_name != best_model else "solid"),
+            )
+        )
+    fig.update_layout(
+        title=f"Comparaison sur {len(test_dates)} points de test - {produit} ({region})",
+        template="plotly_white",
+        yaxis_title="Prix (FCFA/kg)",
+        margin=dict(l=20, r=20, t=60, b=20),
+    )
+
+    return html.Div(
+        [
+            dbc.Row(
+                className="g-4 mb-4",
+                children=[
+                    dbc.Col(kpi_card("Meilleur modèle", best_model, DS_ACCENT), lg=4),
+                    dbc.Col(kpi_card("MAE minimale", f"{metrics_df.iloc[0]['MAE']:.2f}", DS_BLUE_LIGHT), lg=4),
+                    dbc.Col(kpi_card("Points de test", len(test_dates), DS_BLUE), lg=4),
+                ],
+            ),
+            graph_card("Prévisions vs prix réels", fig, "Comparaison chronologique des modèles chargés et de la baseline."),
+            section_card(
+                "Classement des modèles",
+                dash_table.DataTable(
+                    data=metrics_df.to_dict("records") + error_rows,
+                    columns=[{"name": col, "id": col} for col in ["Modèle", "Statut", "MAE", "RMSE", "MAPE (%)", "R²"]],
+                    page_size=10,
+                    sort_action="native",
+                    style_table={"overflowX": "auto"},
+                    style_cell={"fontFamily": "Inter", "padding": "10px", "textAlign": "left"},
+                    style_header={"fontWeight": "800", "backgroundColor": "#f8fafc"},
+                ),
+                "MAE/RMSE plus faibles indiquent une meilleure précision ; R² plus proche de 1 indique une meilleure explication.",
+            ),
+        ],
+        className="stacked-content",
+    )
+
+
 # --- ROUTING & CALLBACKS ---------------------------------------------------
 app.layout = html.Div([dcc.Location(id="url", refresh=False), html.Div(id="page-content")])
 
@@ -939,6 +1350,8 @@ app.layout = html.Div([dcc.Location(id="url", refresh=False), html.Div(id="page-
 def display_page(pathname):
     if pathname in (None, "", "/"):
         return layout_home()
+    if pathname.startswith("/modeles"):
+        return layout_model_tests()
     if pathname.startswith("/previsions"):
         return layout_previsions()
     if pathname.startswith("/descriptif") or pathname.startswith("/dashboard"):
@@ -972,9 +1385,10 @@ def update_region_options(produit_selected):
         Input("filter-region", "value"),
         Input("filter-date", "start_date"),
         Input("filter-date", "end_date"),
+        Input("cluster-count", "value"),
     ],
 )
-def render_tab_content(active_tab, produit, region, start, end):
+def render_tab_content(active_tab, produit, region, start, end, cluster_count):
     if not produit or not region:
         return dbc.Alert("Sélectionnez un produit et une région.", color="warning")
 
@@ -991,11 +1405,11 @@ def render_tab_content(active_tab, produit, region, start, end):
     if active_tab == "tab-correlations":
         return layout_correlations(df)
     if active_tab == "tab-clustering":
-        return layout_clustering(df_full)
+        return layout_clustering(df_full, cluster_count)
     if active_tab == "tab-anomalies":
         return layout_anomalies(df)
     if active_tab == "tab-conclusion":
-        return layout_conclusion(df, produit, region)
+        return layout_conclusion(df, produit, region, cluster_count)
     return layout_metier(df, produit, region)
 
 
@@ -1022,6 +1436,30 @@ def render_forecast_content(produit, region, model_name, horizon):
     if not produit or not region:
         return dbc.Alert("Sélectionnez un produit et une région.", color="warning")
     return layout_forecast_result(produit, region, model_name, horizon or 6)
+
+
+@app.callback(
+    [Output("model-test-region", "options"), Output("model-test-region", "value")],
+    Input("model-test-produit", "value"),
+)
+def update_model_test_region_options(produit_selected):
+    regions_dispo = forecast_regions(produit_selected)
+    options = [{"label": region, "value": region} for region in regions_dispo]
+    return options, regions_dispo[0] if regions_dispo else None
+
+
+@app.callback(
+    Output("model-test-content", "children"),
+    [
+        Input("model-test-produit", "value"),
+        Input("model-test-region", "value"),
+        Input("model-test-ratio", "value"),
+    ],
+)
+def render_model_test_content(produit, region, test_ratio):
+    if not produit or not region:
+        return dbc.Alert("Sélectionnez un produit et une région.", color="warning")
+    return layout_model_test_results(produit, region, test_ratio or 20)
 
 
 if __name__ == "__main__":

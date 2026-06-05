@@ -70,3 +70,21 @@ class ForecastModelInputTests(SimpleTestCase):
             dash_app.model_files = original_model_files
 
         self.assertIsNotNone(content)
+
+    def test_model_files_excludes_lstm_preprocessor_artifacts(self):
+        original_models_dir = dash_app.MODELS_DIR
+        try:
+            from tempfile import TemporaryDirectory
+            from pathlib import Path
+
+            with TemporaryDirectory() as tmpdir:
+                tmp_path = Path(tmpdir)
+                (tmp_path / "regression_model.joblib").write_text("model")
+                (tmp_path / "lstm_preprocessor.joblib").write_text("preprocessor")
+                dash_app.MODELS_DIR = tmp_path
+                names = [path.name for path in dash_app.model_files()]
+        finally:
+            dash_app.MODELS_DIR = original_models_dir
+
+        self.assertIn("regression_model.joblib", names)
+        self.assertNotIn("lstm_preprocessor.joblib", names)

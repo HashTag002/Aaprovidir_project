@@ -1,0 +1,13 @@
+{
+  "name": "regression_model",
+  "estimator_type": "Regression lineaire multiple",
+  "status": "trained",
+  "path": "models/regression_model.joblib",
+  "cv_mae": 79.94259502970347,
+  "holdout_mae": 145.76100816034844,
+  "holdout_rmse": 227.7460700995416,
+  "holdout_mape": 6.848007474308025,
+  "holdout_r2": 0.9803505338638601,
+  "beats_baseline": true,
+  "details": "{}"
+}

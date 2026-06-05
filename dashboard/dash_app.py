@@ -848,7 +848,11 @@ def layout_conclusion(df, produit, region, cluster_count=5):
 def model_files():
     if not MODELS_DIR.exists():
         return []
-    return sorted(MODELS_DIR.glob("*.joblib"))
+    return sorted(
+        path
+        for path in MODELS_DIR.glob("*.joblib")
+        if not path.name.endswith("_preprocessor.joblib")
+    )
 
 
 def model_options():

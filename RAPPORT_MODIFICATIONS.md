@@ -174,3 +174,15 @@ Ajouter une experience applicative plus complete autour du projet PESTEL :
   - Resolution : filtrage des fichiers `*_preprocessor.joblib` dans la detection des modeles.
 - Probleme : Random Forest, XGBoost et LSTM ne battent pas la baseline sur l'entrainement rapide.
   - Resolution : conservation des metriques pour analyse, sauvegarde du meilleur modele `.joblib`, et script parametrable pour relancer une recherche plus longue sans `--quick`.
+
+## Iteration correction style
+
+- Probleme : les pages Dash restaient visuellement basiques car le fichier `assets/style.css` n'etait pas servi par Dash (`/assets/style.css` retournait 404).
+  - Cause : le dossier d'assets etait a la racine du projet alors que l'application Dash est declaree dans `dashboard/dash_app.py`.
+  - Resolution : declaration explicite de `assets_folder` et `assets_url_path` dans l'initialisation Dash.
+- Amelioration complementaire :
+  - renforcement des styles globaux ;
+  - cartes plus modernes ;
+  - hero gradient plus visible ;
+  - dropdowns, tableaux, graphes et sliders mieux stylises ;
+  - verification navigateur sur accueil, dashboard descriptif et dashboard previsions.

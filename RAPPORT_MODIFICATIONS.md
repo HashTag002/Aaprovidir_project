@@ -186,3 +186,19 @@ Ajouter une experience applicative plus complete autour du projet PESTEL :
   - hero gradient plus visible ;
   - dropdowns, tableaux, graphes et sliders mieux stylises ;
   - verification navigateur sur accueil, dashboard descriptif et dashboard previsions.
+
+## Iteration comparaison et selection des modeles
+
+- Ajout d'un selecteur multi-modeles sur la page `Tests modeles`.
+- Remplacement du multi-select par une checklist visible afin de rendre la selection plus simple et plus fiable.
+- Le meilleur modele n'est plus uniquement le plus precis : il est choisi avec un score d'equilibre combinant :
+  - 60 % precision, calculee avec le ratio entre la meilleure MAE et la MAE du modele ;
+  - 40 % explicabilite, favorisant les modeles lineaires puis les ensembles d'arbres, puis les reseaux de neurones.
+- Justification affichee dans la page `Tests modeles` pour expliquer pourquoi le modele est retenu.
+- La page `Previsions` utilise par defaut le modele recommande par ce compromis precision-explicabilite.
+- Probleme UX : les menus deroulants de la page `Previsions` pouvaient etre masques par les KPI.
+  - Resolution : priorite visuelle plus forte pour la carte des filtres, menus dropdown au-dessus du contenu et espacement vertical renforce.
+- Probleme UX : le slider de taille de test pouvait sembler changer pendant le chargement de la page.
+  - Resolution : remplacement par un menu deroulant stable `10 % / 20 % / 30 % / 40 %`.
+- Probleme UX : la page `Previsions` pouvait afficher un etat initial incomplet avant que les callbacks remplissent la region.
+  - Resolution : initialisation directe des options et de la valeur region dans le layout.

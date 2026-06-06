@@ -64,7 +64,7 @@ class ForecastModelInputTests(SimpleTestCase):
         try:
             dash_app.load_model = lambda model_name: self.model
             dash_app.model_files = lambda: [FakeModelPath()]
-            content = dash_app.layout_model_test_results("Maïs", "Centre", 20)
+            content = dash_app.layout_model_test_results("Maïs", "Centre", 20, ["regression_model.joblib"])
         finally:
             dash_app.load_model = original_load_model
             dash_app.model_files = original_model_files
@@ -88,3 +88,24 @@ class ForecastModelInputTests(SimpleTestCase):
 
         self.assertIn("regression_model.joblib", names)
         self.assertNotIn("lstm_preprocessor.joblib", names)
+
+    def test_recommended_model_prefers_balanced_precision_and_explainability(self):
+        rows = [
+            {
+                "Modèle": "random_forest_model.joblib",
+                "Statut": "OK",
+                "Type": "Random Forest",
+                "MAE": 40.0,
+            },
+            {
+                "Modèle": "regression_model.joblib",
+                "Statut": "OK",
+                "Type": "Regression lineaire multiple",
+                "MAE": 45.0,
+            },
+        ]
+
+        scored = dash_app.score_models_for_balance(rows)
+
+        self.assertEqual(scored[0]["Modèle"], "regression_model.joblib")
+        self.assertGreater(scored[0]["Explicabilité"], scored[1]["Explicabilité"])

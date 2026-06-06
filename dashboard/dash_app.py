@@ -3,6 +3,7 @@ from pathlib import Path
 import dash
 import dash_bootstrap_components as dbc
 import joblib
+import json
 import numpy as np
 import pandas as pd
 import plotly.express as px
@@ -33,6 +34,10 @@ DATA_PATH = BASE_DIR / "data" / "Dataset.csv"
 MODELS_DIR = BASE_DIR / "models"
 TARGET_COL = "Prix_Vente_FCFA_kg"
 FORECAST_HELPER_COLUMNS = {"Score_Choc"}
+MODEL_METRICS_PATH = MODELS_DIR / "model_study_metrics.csv"
+BEST_MODEL_METADATA_PATH = MODELS_DIR / "best_model_metadata.json"
+PRECISION_WEIGHT = 0.60
+EXPLAINABILITY_WEIGHT = 0.40
 
 app = dash.Dash(
     __name__,
@@ -861,6 +866,115 @@ def model_options():
     return [{"label": path.name, "value": path.name} for path in model_files()]
 
 
+def model_metric_records():
+    records = {}
+    if MODEL_METRICS_PATH.exists():
+        try:
+            metrics_df = pd.read_csv(MODEL_METRICS_PATH)
+            for _, row in metrics_df.iterrows():
+                path = row.get("path")
+                if isinstance(path, str) and path.endswith(".joblib"):
+                    records[Path(path).name] = row.to_dict()
+        except Exception:
+            records = {}
+
+    if BEST_MODEL_METADATA_PATH.exists():
+        try:
+            metadata = json.loads(BEST_MODEL_METADATA_PATH.read_text(encoding="utf-8"))
+            records["best_model.joblib"] = {
+                **metadata,
+                "name": f"best_model ({metadata.get('name', 'source inconnue')})",
+                "path": "models/best_model.joblib",
+            }
+        except Exception:
+            pass
+    return records
+
+
+def model_explainability_score(model_name, estimator_type=None):
+    label = f"{model_name} {estimator_type or ''}".lower()
+    if "regression" in label or "lineaire" in label or "linear" in label:
+        return 1.00
+    if "random_forest" in label or "random forest" in label:
+        return 0.68
+    if "xgboost" in label:
+        return 0.58
+    if "lstm" in label:
+        return 0.25
+    if "baseline" in label:
+        return 0.90
+    return 0.50
+
+
+def score_models_for_balance(metric_rows):
+    scored = []
+    valid_rows = [
+        row
+        for row in metric_rows
+        if row.get("Statut") == "OK" and pd.notna(row.get("MAE"))
+    ]
+    if not valid_rows:
+        return scored
+
+    maes = [float(row["MAE"]) for row in valid_rows]
+    min_mae = min(maes)
+
+    for row in valid_rows:
+        precision_score = min(1.0, min_mae / max(float(row["MAE"]), 1e-9))
+        explainability = model_explainability_score(row["Modèle"], row.get("Type"))
+        balanced_score = PRECISION_WEIGHT * precision_score + EXPLAINABILITY_WEIGHT * explainability
+        scored.append(
+            {
+                **row,
+                "Score précision": round(precision_score, 3),
+                "Explicabilité": round(explainability, 2),
+                "Score équilibre": round(balanced_score, 3),
+            }
+        )
+    return sorted(scored, key=lambda row: row["Score équilibre"], reverse=True)
+
+
+def recommended_model_name(candidate_names=None):
+    available = [path.name for path in model_files()]
+    candidates = [name for name in (candidate_names or available) if name in available]
+    if not candidates:
+        return None
+
+    records = model_metric_records()
+    rows = []
+    for name in candidates:
+        record = records.get(name, {})
+        mae = record.get("holdout_mae")
+        if pd.isna(mae):
+            mae = None
+        rows.append(
+            {
+                "Modèle": name,
+                "Statut": "OK",
+                "Type": record.get("estimator_type", name),
+                "MAE": float(mae) if mae is not None else 999999.0,
+            }
+        )
+
+    scored = score_models_for_balance(rows)
+    if scored:
+        return scored[0]["Modèle"]
+    return "best_model.joblib" if "best_model.joblib" in candidates else candidates[0]
+
+
+def recommended_model_explanation(model_name):
+    records = model_metric_records()
+    record = records.get(model_name, {})
+    estimator_type = record.get("estimator_type", "type non documenté")
+    mae = record.get("holdout_mae")
+    explainability = model_explainability_score(model_name, estimator_type)
+    mae_text = "MAE non disponible" if pd.isna(mae) else f"MAE holdout {float(mae):.2f}"
+    return (
+        f"{model_name} est recommandé car il offre le meilleur compromis entre précision "
+        f"({mae_text}) et explicabilité ({explainability:.2f}/1, {estimator_type})."
+    )
+
+
 def load_model(model_name):
     if not model_name:
         return None
@@ -879,7 +993,9 @@ def forecast_regions(produit):
 def layout_previsions():
     products = available_products()
     product = default_product()
+    regions = forecast_regions(product)
     models = model_options()
+    recommended = recommended_model_name()
 
     return html.Div(
         [
@@ -893,8 +1009,13 @@ def layout_previsions():
                         "Projection des prix et lecture décisionnelle",
                         "Chargez un modèle `.joblib` dans le dossier `models`, sélectionnez un produit et obtenez une trajectoire de prix accompagnée de recommandations.",
                     ),
+                    dbc.Alert(
+                        recommended_model_explanation(recommended) if recommended else "Déposez un modèle `.joblib` dans `models/` pour activer les prévisions.",
+                        color="info",
+                        className="model-recommendation-alert",
+                    ),
                     dbc.Card(
-                        className="filter-card",
+                        className="filter-card forecast-filter-card",
                         children=dbc.CardBody(
                             dbc.Row(
                                 [
@@ -914,7 +1035,12 @@ def layout_previsions():
                                     dbc.Col(
                                         [
                                             html.Label("RÉGION", className="filter-label"),
-                                            dcc.Dropdown(id="forecast-region", options=[], clearable=False),
+                                            dcc.Dropdown(
+                                                id="forecast-region",
+                                                options=[{"label": region, "value": region} for region in regions],
+                                                value=regions[0] if regions else None,
+                                                clearable=False,
+                                            ),
                                         ],
                                         lg=3,
                                         md=6,
@@ -925,7 +1051,7 @@ def layout_previsions():
                                             dcc.Dropdown(
                                                 id="forecast-model",
                                                 options=models,
-                                                value=models[0]["value"] if models else None,
+                                                value=recommended or (models[0]["value"] if models else None),
                                                 placeholder="Déposer un fichier .joblib dans models/",
                                                 clearable=True,
                                             ),
@@ -1117,6 +1243,7 @@ def layout_forecast_result(produit, region, model_name, horizon):
 # --- MODEL TESTING ---------------------------------------------------------
 def layout_model_tests():
     product = default_product()
+    regions = forecast_regions(product)
     models = model_files()
 
     return html.Div(
@@ -1134,48 +1261,75 @@ def layout_model_tests():
                     dbc.Card(
                         className="filter-card",
                         children=dbc.CardBody(
-                            dbc.Row(
-                                [
-                                    dbc.Col(
-                                        [
-                                            html.Label("PRODUIT", className="filter-label"),
-                                            dcc.Dropdown(
-                                                id="model-test-produit",
-                                                options=[{"label": p, "value": p} for p in available_products()],
-                                                value=product,
-                                                clearable=False,
-                                            ),
-                                        ],
-                                        lg=3,
-                                        md=6,
-                                    ),
-                                    dbc.Col(
-                                        [
-                                            html.Label("RÉGION", className="filter-label"),
-                                            dcc.Dropdown(id="model-test-region", options=[], clearable=False),
-                                        ],
-                                        lg=3,
-                                        md=6,
-                                    ),
-                                    dbc.Col(
-                                        [
-                                            html.Label("TAILLE DU TEST TEMPOREL", className="filter-label"),
-                                            dcc.Slider(
-                                                id="model-test-ratio",
-                                                min=10,
-                                                max=40,
-                                                step=5,
-                                                value=20,
-                                                marks={10: "10%", 20: "20%", 30: "30%", 40: "40%"},
-                                                tooltip={"placement": "bottom", "always_visible": False},
-                                            ),
-                                        ],
-                                        lg=6,
-                                        md=12,
-                                    ),
-                                ],
-                                className="g-3",
-                            )
+                            [
+                                dbc.Row(
+                                    [
+                                        dbc.Col(
+                                            [
+                                                html.Label("PRODUIT", className="filter-label"),
+                                                dcc.Dropdown(
+                                                    id="model-test-produit",
+                                                    options=[{"label": p, "value": p} for p in available_products()],
+                                                    value=product,
+                                                    clearable=False,
+                                                ),
+                                            ],
+                                            lg=3,
+                                            md=6,
+                                        ),
+                                        dbc.Col(
+                                            [
+                                                html.Label("RÉGION", className="filter-label"),
+                                                dcc.Dropdown(
+                                                    id="model-test-region",
+                                                    options=[{"label": region, "value": region} for region in regions],
+                                                    value=regions[0] if regions else None,
+                                                    clearable=False,
+                                                ),
+                                            ],
+                                            lg=3,
+                                            md=6,
+                                        ),
+                                        dbc.Col(
+                                            [
+                                                html.Label("TAILLE DU TEST TEMPOREL", className="filter-label"),
+                                                dcc.Dropdown(
+                                                    id="model-test-ratio",
+                                                    options=[
+                                                        {"label": "10 %", "value": 10},
+                                                        {"label": "20 %", "value": 20},
+                                                        {"label": "30 %", "value": 30},
+                                                        {"label": "40 %", "value": 40},
+                                                    ],
+                                                    value=20,
+                                                    clearable=False,
+                                                ),
+                                            ],
+                                            lg=6,
+                                            md=12,
+                                        ),
+                                    ],
+                                    className="g-3",
+                                ),
+                                dbc.Row(
+                                    [
+                                        dbc.Col(
+                                            [
+                                                html.Label("MODÈLES À COMPARER", className="filter-label mt-4"),
+                                                dcc.Checklist(
+                                                    id="model-test-models",
+                                                    options=model_options(),
+                                                    value=[path.name for path in models],
+                                                    className="model-checklist",
+                                                    inputClassName="model-check-input",
+                                                    labelClassName="model-check-label",
+                                                ),
+                                            ],
+                                            lg=12,
+                                        )
+                                    ]
+                                ),
+                            ]
                         ),
                     ),
                     dcc.Loading(id="loading-model-tests", type="circle", children=html.Div(id="model-test-content")),
@@ -1222,6 +1376,7 @@ def evaluate_loaded_model(df, model_name, test_ratio):
     return {
         "model": model_name,
         "status": "OK",
+        "type": model_metric_records().get(model_name, {}).get("estimator_type", type(model).__name__),
         "metrics": metrics,
         "predictions": pd.DataFrame(
             {
@@ -1257,20 +1412,25 @@ def evaluate_baseline(df, test_ratio):
     }
 
 
-def layout_model_test_results(produit, region, test_ratio):
+def layout_model_test_results(produit, region, test_ratio, selected_models=None):
     df = df_full[(df_full["Produit_ID"] == produit) & (df_full["Region_Vente"] == region)].sort_values("Date").copy()
     if df.empty:
         return empty_state("Test indisponible", "Aucune donnée disponible pour cette combinaison produit-région.")
     if len(df) < 12:
         return empty_state("Historique insuffisant", "Il faut au moins 12 observations pour créer un jeu de test temporel fiable.")
 
+    selected_models = selected_models or [path.name for path in model_files()]
+    selected_models = [name for name in selected_models if name in [path.name for path in model_files()]]
+    if not selected_models:
+        return empty_state("Aucun modèle sélectionné", "Choisissez au moins un modèle `.joblib` à comparer.")
+
     evaluations = [evaluate_baseline(df, test_ratio)]
     error_rows = []
-    for model_path in model_files():
+    for model_name in selected_models:
         try:
-            evaluations.append(evaluate_loaded_model(df, model_path.name, test_ratio))
+            evaluations.append(evaluate_loaded_model(df, model_name, test_ratio))
         except Exception as exc:
-            error_rows.append({"Modèle": model_path.name, "Statut": f"Erreur : {exc}"})
+            error_rows.append({"Modèle": model_name, "Statut": f"Erreur : {exc}"})
 
     metric_rows = []
     prediction_frames = []
@@ -1278,6 +1438,7 @@ def layout_model_test_results(produit, region, test_ratio):
         row = {
             "Modèle": evaluation["model"],
             "Statut": evaluation["status"],
+            "Type": evaluation.get("type", evaluation["status"]),
             "MAE": round(evaluation["metrics"]["MAE"], 2),
             "RMSE": round(evaluation["metrics"]["RMSE"], 2),
             "MAPE (%)": round(evaluation["metrics"]["MAPE"], 2) if not pd.isna(evaluation["metrics"]["MAPE"]) else None,
@@ -1286,8 +1447,26 @@ def layout_model_test_results(produit, region, test_ratio):
         metric_rows.append(row)
         prediction_frames.append(evaluation["predictions"])
 
-    metrics_df = pd.DataFrame(metric_rows).sort_values("MAE")
-    best_model = metrics_df.iloc[0]["Modèle"]
+    scored_models = score_models_for_balance(metric_rows)
+    best_model = scored_models[0]["Modèle"] if scored_models else metric_rows[0]["Modèle"]
+    score_lookup = {row["Modèle"]: row for row in scored_models}
+    enriched_rows = []
+    for row in metric_rows:
+        scored = score_lookup.get(row["Modèle"], {})
+        enriched_rows.append(
+            {
+                **row,
+                "Score précision": scored.get("Score précision"),
+                "Explicabilité": scored.get("Explicabilité"),
+                "Score équilibre": scored.get("Score équilibre"),
+            }
+        )
+    metrics_df = pd.DataFrame(enriched_rows).sort_values(
+        ["Score équilibre", "MAE"],
+        ascending=[False, True],
+        na_position="last",
+    )
+    best_score = metrics_df.iloc[0]["Score équilibre"] if pd.notna(metrics_df.iloc[0]["Score équilibre"]) else None
     predictions_df = pd.concat(prediction_frames, ignore_index=True)
     test_dates = predictions_df["Date"].sort_values().unique()
     actual_df = predictions_df[predictions_df["Modèle"] == "Baseline Prix_T-1"].copy()
@@ -1324,24 +1503,56 @@ def layout_model_test_results(produit, region, test_ratio):
             dbc.Row(
                 className="g-4 mb-4",
                 children=[
-                    dbc.Col(kpi_card("Meilleur modèle", best_model, DS_ACCENT), lg=4),
-                    dbc.Col(kpi_card("MAE minimale", f"{metrics_df.iloc[0]['MAE']:.2f}", DS_BLUE_LIGHT), lg=4),
+                    dbc.Col(kpi_card("Meilleur compromis", best_model, DS_ACCENT), lg=4),
+                    dbc.Col(kpi_card("Score équilibre", f"{best_score:.3f}" if best_score is not None else "N/A", DS_BLUE_LIGHT), lg=4),
                     dbc.Col(kpi_card("Points de test", len(test_dates), DS_BLUE), lg=4),
                 ],
+            ),
+            section_card(
+                "Pourquoi ce modèle ?",
+                html.Div(
+                    [
+                        html.P(
+                            "Le choix privilégie un juste milieu : 60 % de précision "
+                            "(MAE normalisée sur les modèles sélectionnés) et 40 % d'explicabilité "
+                            "(régression > forêts/boosting > réseaux de neurones).",
+                            className="mb-2",
+                        ),
+                        html.Div(
+                            f"{best_model} est retenu car il maximise ce score d'équilibre parmi les modèles sélectionnés.",
+                            className="feature-callout",
+                        ),
+                    ]
+                ),
+                "La baseline reste visible comme référence mais n'est pas candidate au meilleur modèle prédictif.",
             ),
             graph_card("Prévisions vs prix réels", fig, "Comparaison chronologique des modèles chargés et de la baseline."),
             section_card(
                 "Classement des modèles",
                 dash_table.DataTable(
                     data=metrics_df.to_dict("records") + error_rows,
-                    columns=[{"name": col, "id": col} for col in ["Modèle", "Statut", "MAE", "RMSE", "MAPE (%)", "R²"]],
+                    columns=[
+                        {"name": col, "id": col}
+                        for col in [
+                            "Modèle",
+                            "Statut",
+                            "Type",
+                            "MAE",
+                            "RMSE",
+                            "MAPE (%)",
+                            "R²",
+                            "Score précision",
+                            "Explicabilité",
+                            "Score équilibre",
+                        ]
+                    ],
                     page_size=10,
                     sort_action="native",
                     style_table={"overflowX": "auto"},
                     style_cell={"fontFamily": "Inter", "padding": "10px", "textAlign": "left"},
                     style_header={"fontWeight": "800", "backgroundColor": "#f8fafc"},
                 ),
-                "MAE/RMSE plus faibles indiquent une meilleure précision ; R² plus proche de 1 indique une meilleure explication.",
+                "Le score équilibre combine la précision et la lisibilité métier du modèle.",
             ),
         ],
         className="stacked-content",
@@ -1460,12 +1671,13 @@ def update_model_test_region_options(produit_selected):
         Input("model-test-produit", "value"),
         Input("model-test-region", "value"),
         Input("model-test-ratio", "value"),
+        Input("model-test-models", "value"),
     ],
 )
-def render_model_test_content(produit, region, test_ratio):
+def render_model_test_content(produit, region, test_ratio, selected_models):
     if not produit or not region:
         return dbc.Alert("Sélectionnez un produit et une région.", color="warning")
-    return layout_model_test_results(produit, region, test_ratio or 20)
+    return layout_model_test_results(produit, region, test_ratio or 20, selected_models)
 
 
 if __name__ == "__main__":

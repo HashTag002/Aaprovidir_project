@@ -36,8 +36,10 @@ TARGET_COL = "Prix_Vente_FCFA_kg"
 FORECAST_HELPER_COLUMNS = {"Score_Choc"}
 MODEL_METRICS_PATH = MODELS_DIR / "model_study_metrics.csv"
 BEST_MODEL_METADATA_PATH = MODELS_DIR / "best_model_metadata.json"
+FEATURE_IMPORTANCE_PATH = MODELS_DIR / "feature_importance.csv"
 PRECISION_WEIGHT = 0.60
 EXPLAINABILITY_WEIGHT = 0.40
+DEFAULT_WINDOW_SIZE = 12
 
 app = dash.Dash(
     __name__,
@@ -624,6 +626,18 @@ def layout_clustering(full_df, n_clusters=5):
         .reset_index()
         .round(2)
     )
+    importance_df = pd.DataFrame(feature_importance_records(10))
+    fig_importance = px.bar(
+        importance_df.sort_values("importance"),
+        x="importance",
+        y="feature",
+        orientation="h",
+        title="Features clés pour la modélisation",
+        labels={"importance": "Importance", "feature": "Feature"},
+        template="plotly_white",
+        color="importance",
+        color_continuous_scale="Teal",
+    )
 
     return html.Div(
         [
@@ -644,6 +658,11 @@ def layout_clustering(full_df, n_clusters=5):
                     style_header={"fontWeight": "800", "backgroundColor": "#f8fafc"},
                 ),
                 "Synthèse métier des groupes calculés avec le nombre de clusters choisi.",
+            ),
+            graph_card(
+                "Features par ordre d'importance",
+                fig_importance,
+                "Ces variables guident la réduction de dimension et la construction des fenêtres des modèles.",
             ),
         ],
         className="stacked-content",
@@ -866,6 +885,21 @@ def model_options():
     return [{"label": path.name, "value": path.name} for path in model_files()]
 
 
+def feature_importance_records(limit=10):
+    if FEATURE_IMPORTANCE_PATH.exists():
+        try:
+            df = pd.read_csv(FEATURE_IMPORTANCE_PATH)
+            if {"feature", "importance"}.issubset(df.columns):
+                return df.head(limit).to_dict("records")
+        except Exception:
+            pass
+    corr_prix, _ = get_price_correlations(df_full)
+    return [
+        {"feature": feature, "importance": abs(value)}
+        for feature, value in corr_prix.head(limit).items()
+    ]
+
+
 def model_metric_records():
     records = {}
     if MODEL_METRICS_PATH.exists():
@@ -889,6 +923,59 @@ def model_metric_records():
         except Exception:
             pass
     return records
+
+
+def parse_lagged_feature(feature_name):
+    if "__" not in feature_name or not feature_name.startswith("lag_"):
+        return None
+    lag_part, source_col = feature_name.split("__", 1)
+    try:
+        return int(lag_part.replace("lag_", "")), source_col
+    except ValueError:
+        return None
+
+
+def model_window_size(model):
+    feature_names = getattr(model, "feature_names_in_", None)
+    if feature_names is None:
+        return None
+    lags = [
+        parsed[0]
+        for parsed in (parse_lagged_feature(name) for name in feature_names)
+        if parsed is not None
+    ]
+    return max(lags) if lags else None
+
+
+def build_windowed_model_input(history_df, model):
+    feature_names = getattr(model, "feature_names_in_", None)
+    if feature_names is None:
+        return None
+    row = {}
+    for feature_name in feature_names:
+        parsed = parse_lagged_feature(feature_name)
+        if parsed is None:
+            return None
+        lag, source_col = parsed
+        if len(history_df) < lag:
+            raise ValueError(f"historique insuffisant: {lag} mois requis")
+        source = history_df.iloc[-lag]
+        row[feature_name] = source.get(source_col, 0)
+    return pd.DataFrame([row])
+
+
+def next_history_row(history_df, prediction, future_date):
+    row = history_df.iloc[-1].copy()
+    previous_price = float(history_df[TARGET_COL].iloc[-1])
+    row["Date"] = future_date
+    row[TARGET_COL] = prediction
+    if "Prix_T-1" in row.index:
+        row["Prix_T-1"] = previous_price
+    if "Saisonnalite_Sin" in row.index:
+        row["Saisonnalite_Sin"] = np.sin(2 * np.pi * future_date.month / 12)
+    if "Saisonnalite_Cos" in row.index:
+        row["Saisonnalite_Cos"] = np.cos(2 * np.pi * future_date.month / 12)
+    return row
 
 
 def model_explainability_score(model_name, estimator_type=None):
@@ -1078,6 +1165,23 @@ def layout_previsions():
                         ),
                     ),
                     dcc.Loading(id="loading-forecast", type="circle", children=html.Div(id="forecast-content")),
+                    section_card(
+                        "Assistant investisseur",
+                        html.Div(
+                            [
+                                html.Div("💬", className="chat-icon"),
+                                dcc.Textarea(
+                                    id="investor-question",
+                                    value="Dans quelle filière se lancer en 2027 ?",
+                                    className="investor-question",
+                                ),
+                                dbc.Button("Analyser", id="investor-question-button", color="primary", className="mt-2"),
+                                html.Div(id="investor-answer", className="investor-answer mt-3"),
+                            ],
+                            className="investor-chat",
+                        ),
+                        "Posez une question métier. L'assistant s'appuie sur les features clés, l'historique et le modèle recommandé.",
+                    ),
                 ],
             ),
         ]
@@ -1143,24 +1247,33 @@ def model_forecast(df, horizon, model_name):
         return baseline_forecast(df, horizon)
 
     rows = []
-    last_row = df.sort_values("Date").iloc[-1].copy()
+    history = df.sort_values("Date").copy()
+    last_row = history.iloc[-1].copy()
     previous_price = float(last_row[TARGET_COL])
+    window_size = model_window_size(model)
 
     try:
         for step in range(1, horizon + 1):
-            future_date = last_row["Date"] + pd.DateOffset(months=step)
-            row = last_row.copy()
-            row["Date"] = future_date
-            if "Prix_T-1" in row.index:
-                row["Prix_T-1"] = previous_price
-            if "Saisonnalite_Sin" in row.index:
-                row["Saisonnalite_Sin"] = np.sin(2 * np.pi * future_date.month / 12)
-            if "Saisonnalite_Cos" in row.index:
-                row["Saisonnalite_Cos"] = np.cos(2 * np.pi * future_date.month / 12)
-
-            x_pred = build_model_input(row, model)
+            future_date = history["Date"].iloc[-1] + pd.DateOffset(months=1)
+            if window_size:
+                x_pred = build_windowed_model_input(history, model)
+            else:
+                row = last_row.copy()
+                row["Date"] = future_date
+                if "Prix_T-1" in row.index:
+                    row["Prix_T-1"] = previous_price
+                if "Saisonnalite_Sin" in row.index:
+                    row["Saisonnalite_Sin"] = np.sin(2 * np.pi * future_date.month / 12)
+                if "Saisonnalite_Cos" in row.index:
+                    row["Saisonnalite_Cos"] = np.cos(2 * np.pi * future_date.month / 12)
+                x_pred = build_model_input(row, model)
             pred = float(np.ravel(model.predict(x_pred))[0])
             previous_price = pred
+            history = pd.concat(
+                [history, pd.DataFrame([next_history_row(history, pred, future_date)])],
+                ignore_index=True,
+            )
+            last_row = history.iloc[-1].copy()
             rows.append({"Date": future_date, "Prévision": pred})
         return pd.DataFrame(rows), f"Prévision générée avec le modèle joblib `{model_name}`."
     except Exception as exc:
@@ -1195,6 +1308,64 @@ def recommendation_items(df, forecast_df):
         risk_action,
         f"Prioriser le suivi de {top_feature}, facteur le plus associé au prix dans l'historique filtré.",
     ]
+
+
+def answer_investor_question(question, model_name=None):
+    question = (question or "").lower()
+    top_features = [row["feature"] for row in feature_importance_records(5)]
+    if "feature" in question or "variable" in question or "facteur" in question:
+        return html.Div(
+            [
+                html.Strong("Top 5 features clés :"),
+                html.Ul([html.Li(feature) for feature in top_features]),
+                html.Div("Ces variables sont priorisées pour réduire la dimension avant entraînement."),
+            ]
+        )
+
+    if "2027" in question or "fili" in question or "lancer" in question or "invest" in question:
+        model_name = model_name or recommended_model_name()
+        rows = []
+        for (produit, region), sub in df_full.groupby(["Produit_ID", "Region_Vente"]):
+            sub = sub.sort_values("Date").copy()
+            if len(sub) < DEFAULT_WINDOW_SIZE + 1:
+                continue
+            forecast_df, _ = model_forecast(sub, 12, model_name)
+            avg_forecast = float(forecast_df["Prévision"].mean())
+            stability = 1 / (1 + float(sub[TARGET_COL].tail(24).std() / max(sub[TARGET_COL].tail(24).mean(), 1)))
+            score = avg_forecast * stability
+            rows.append(
+                {
+                    "produit": produit,
+                    "region": region,
+                    "prix_prevu": avg_forecast,
+                    "stabilite": stability,
+                    "score": score,
+                }
+            )
+        best = sorted(rows, key=lambda row: row["score"], reverse=True)[:5]
+        return html.Div(
+            [
+                html.Strong("Filières à analyser en priorité pour 2027 :"),
+                html.Ol(
+                    [
+                        html.Li(
+                            f"{row['produit']} ({row['region']}) - prix moyen prévu {row['prix_prevu']:.0f} FCFA/kg, stabilité {row['stabilite']:.2f}."
+                        )
+                        for row in best
+                    ]
+                ),
+                html.Div(
+                    "Réponse basée sur l'historique local et le modèle recommandé. Une API de recherche externe pourra enrichir cette réponse au déploiement."
+                ),
+            ]
+        )
+
+    return html.Div(
+        [
+            html.Strong("Réponse rapide :"),
+            html.Div("Essayez par exemple : 'donne les 5 features clés' ou 'dans quelle filière se lancer en 2027 ?'."),
+        ]
+    )
 
 
 def layout_forecast_result(produit, region, model_name, horizon):
@@ -1305,7 +1476,25 @@ def layout_model_tests():
                                                     clearable=False,
                                                 ),
                                             ],
-                                            lg=6,
+                                            lg=3,
+                                            md=12,
+                                        ),
+                                        dbc.Col(
+                                            [
+                                                html.Label("FENÊTRE HISTORIQUE", className="filter-label"),
+                                                dcc.Dropdown(
+                                                    id="model-test-window",
+                                                    options=[
+                                                        {"label": "6 mois", "value": 6},
+                                                        {"label": "9 mois", "value": 9},
+                                                        {"label": "12 mois", "value": 12},
+                                                        {"label": "18 mois", "value": 18},
+                                                    ],
+                                                    value=DEFAULT_WINDOW_SIZE,
+                                                    clearable=False,
+                                                ),
+                                            ],
+                                            lg=3,
                                             md=12,
                                         ),
                                     ],
@@ -1363,13 +1552,22 @@ def split_train_test(df, test_ratio):
     return df.iloc[:-test_size], df.iloc[-test_size:]
 
 
-def evaluate_loaded_model(df, model_name, test_ratio):
-    _, test_df = split_train_test(df, test_ratio)
+def evaluate_loaded_model(df, model_name, test_ratio, window_size=DEFAULT_WINDOW_SIZE):
+    df = df.sort_values("Date").reset_index(drop=True)
+    train_df, test_df = split_train_test(df, test_ratio)
     model = load_model(model_name)
+    expected_window = model_window_size(model)
+    if expected_window and int(window_size or DEFAULT_WINDOW_SIZE) != expected_window:
+        raise ValueError(f"modèle entraîné avec une fenêtre de {expected_window} mois")
     predictions = []
 
-    for _, row in test_df.iterrows():
-        x_pred = build_model_input(row.copy(), model)
+    train_len = len(train_df)
+    for offset, (_, row) in enumerate(test_df.iterrows()):
+        if expected_window:
+            history = df.iloc[: train_len + offset]
+            x_pred = build_windowed_model_input(history, model)
+        else:
+            x_pred = build_model_input(row.copy(), model)
         predictions.append(float(np.ravel(model.predict(x_pred))[0]))
 
     metrics = metric_summary(test_df[TARGET_COL], predictions)
@@ -1412,7 +1610,7 @@ def evaluate_baseline(df, test_ratio):
     }
 
 
-def layout_model_test_results(produit, region, test_ratio, selected_models=None):
+def layout_model_test_results(produit, region, test_ratio, selected_models=None, window_size=DEFAULT_WINDOW_SIZE):
     df = df_full[(df_full["Produit_ID"] == produit) & (df_full["Region_Vente"] == region)].sort_values("Date").copy()
     if df.empty:
         return empty_state("Test indisponible", "Aucune donnée disponible pour cette combinaison produit-région.")
@@ -1428,7 +1626,7 @@ def layout_model_test_results(produit, region, test_ratio, selected_models=None)
     error_rows = []
     for model_name in selected_models:
         try:
-            evaluations.append(evaluate_loaded_model(df, model_name, test_ratio))
+            evaluations.append(evaluate_loaded_model(df, model_name, test_ratio, window_size))
         except Exception as exc:
             error_rows.append({"Modèle": model_name, "Statut": f"Erreur : {exc}"})
 
@@ -1656,6 +1854,18 @@ def render_forecast_content(produit, region, model_name, horizon):
 
 
 @app.callback(
+    Output("investor-answer", "children"),
+    Input("investor-question-button", "n_clicks"),
+    [
+        Input("investor-question", "value"),
+        Input("forecast-model", "value"),
+    ],
+)
+def render_investor_answer(_clicks, question, model_name):
+    return answer_investor_question(question, model_name)
+
+
+@app.callback(
     [Output("model-test-region", "options"), Output("model-test-region", "value")],
     Input("model-test-produit", "value"),
 )
@@ -1671,13 +1881,14 @@ def update_model_test_region_options(produit_selected):
         Input("model-test-produit", "value"),
         Input("model-test-region", "value"),
         Input("model-test-ratio", "value"),
+        Input("model-test-window", "value"),
         Input("model-test-models", "value"),
     ],
 )
-def render_model_test_content(produit, region, test_ratio, selected_models):
+def render_model_test_content(produit, region, test_ratio, window_size, selected_models):
     if not produit or not region:
         return dbc.Alert("Sélectionnez un produit et une région.", color="warning")
-    return layout_model_test_results(produit, region, test_ratio or 20, selected_models)
+    return layout_model_test_results(produit, region, test_ratio or 20, selected_models, window_size or DEFAULT_WINDOW_SIZE)
 
 
 if __name__ == "__main__":

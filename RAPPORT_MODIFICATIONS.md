@@ -202,3 +202,29 @@ Ajouter une experience applicative plus complete autour du projet PESTEL :
   - Resolution : remplacement par un menu deroulant stable `10 % / 20 % / 30 % / 40 %`.
 - Probleme UX : la page `Previsions` pouvait afficher un etat initial incomplet avant que les callbacks remplissent la region.
   - Resolution : initialisation directe des options et de la valeur region dans le layout.
+
+## Iteration fenetres temporelles et assistant investisseur
+
+- Correction de la modelisation :
+  - MLP, Random Forest et XGBoost sont maintenant entraines sur des fenetres temporelles ;
+  - la fenetre par defaut est de 12 mois pour capturer la saisonnalite annuelle ;
+  - chaque ligne d'apprentissage utilise les 12 mois passes pour predire le mois suivant ;
+  - le LSTM utilise la meme taille de fenetre au niveau de la standardisation et de la sequence d'entree.
+- Ajout d'un controle `Fenetre historique` dans la page `Tests modeles`.
+- Ajout de `mlp_model.joblib`.
+- Ajout de `feature_importance.csv` dans `models/`.
+- Reduction de dimension :
+  - selection des 10 features les plus importantes avant creation des fenetres ;
+  - PCA appliquee aux modeles lineaires/MLP fenetres lorsque pertinent ;
+  - la regression multiple de production reste sans PCA pour conserver l'explicabilite des coefficients.
+- Resultat courant :
+  - `regression_model.joblib` reste le meilleur modele de production car il bat la baseline et reste explicable ;
+  - MLP, Random Forest, XGBoost et LSTM sont conserves pour comparaison et optimisation future.
+- Dashboard :
+  - la segmentation affiche maintenant les features par ordre d'importance ;
+  - la page `Previsions` contient un assistant investisseur ;
+  - l'assistant peut retourner les 5 features cles ou proposer des filieres a analyser pour 2027 a partir des prix prevus et de la stabilite historique.
+- Hebergement :
+  - ajout de `DEPLOYMENT.md` ;
+  - recommandation de separer l'entrainement des modeles du serveur web en production ;
+  - prevoir une API externe de recherche marche si l'assistant investisseur doit utiliser Internet en temps reel.

@@ -109,3 +109,17 @@ class ForecastModelInputTests(SimpleTestCase):
 
         self.assertEqual(scored[0]["Modèle"], "regression_model.joblib")
         self.assertGreater(scored[0]["Explicabilité"], scored[1]["Explicabilité"])
+
+    def test_windowed_model_input_uses_historical_lags(self):
+        model = dash_app.load_model("mlp_model.joblib")
+        history = self.df.tail(12)
+
+        x_pred = dash_app.build_windowed_model_input(history, model)
+
+        self.assertEqual(x_pred.shape[0], 1)
+        self.assertTrue(all(name.startswith("lag_") for name in x_pred.columns))
+
+    def test_investor_assistant_returns_key_features(self):
+        answer = dash_app.answer_investor_question("donne les 5 features clés")
+
+        self.assertIsNotNone(answer)

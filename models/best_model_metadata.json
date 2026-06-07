@@ -1,13 +1,15 @@
 {
   "name": "regression_model",
-  "estimator_type": "Regression lineaire multiple",
+  "estimator_type": "Regression lineaire multiple explicable",
   "status": "trained",
   "path": "models/regression_model.joblib",
-  "cv_mae": 79.94259502970347,
-  "holdout_mae": 145.76100816034844,
-  "holdout_rmse": 227.7460700995416,
-  "holdout_mape": 6.848007474308025,
-  "holdout_r2": 0.9803505338638601,
+  "cv_mae": null,
+  "holdout_mae": 152.63358536639464,
+  "holdout_rmse": 236.70974416669534,
+  "holdout_mape": 6.9673244940923915,
+  "holdout_r2": 0.9803301081711644,
   "beats_baseline": true,
-  "details": "{}"
+  "window_size": 0,
+  "selected_features": "Saisonnalite_Sin, Saisonnalite_Cos, Superficie_Cultivee_ha, Demographie_Vente, Pluie_Lag, Temperature_Moy, Pertes_PostRecolte_Pct, Prix_Intrants, Indice_Carburant, Accessibilite_Route, Cout_Transport, Taux_Naira, Inflation_Mensuelle_Pct, Restrictions_Import, Stocks_Retenus, Choc_Demande, Choc_Securitaire, Choc_Frontiere, Choc_Sanitaire, Choc_Economique, Prix_T-1",
+  "details": "Modele tabulaire explicable conserve comme reference de production, sans PCA pour garder les coefficients lisibles."
 }

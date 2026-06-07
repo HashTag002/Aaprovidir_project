@@ -455,6 +455,44 @@ a {
     accent-color: var(--ds-accent);
 }
 
+.investor-chat {
+    display: grid;
+    grid-template-columns: 48px 1fr;
+    gap: 0.9rem;
+    align-items: start;
+}
+
+.chat-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    height: 48px;
+    border-radius: 999px;
+    background: linear-gradient(135deg, var(--ds-blue), var(--ds-accent));
+    box-shadow: 0 12px 30px rgba(15, 61, 94, 0.18);
+}
+
+.investor-question {
+    min-height: 84px;
+    width: 100%;
+    border: 1px solid var(--ds-line);
+    border-radius: 18px;
+    padding: 0.9rem 1rem;
+    font-family: 'Inter', sans-serif;
+    font-weight: 600;
+    color: var(--ds-text);
+    resize: vertical;
+}
+
+.investor-answer {
+    grid-column: 2;
+    padding: 1rem;
+    border-radius: 18px;
+    background: linear-gradient(135deg, rgba(43, 179, 163, 0.11), rgba(23, 107, 135, 0.07));
+    color: var(--ds-text);
+}
+
 .dash-table-container {
     border-radius: 16px;
     overflow: hidden;

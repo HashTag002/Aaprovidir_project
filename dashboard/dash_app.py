@@ -11,12 +11,18 @@ import plotly.graph_objects as go
 from dash import Input, Output, dcc, dash_table, html
 from plotly.subplots import make_subplots
 from scipy import stats
-from sklearn.cluster import KMeans
+import os
+import requests
+from sklearn.cluster import KMeans, DBSCAN
 from sklearn.decomposition import PCA
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score, silhouette_score
 from sklearn.preprocessing import StandardScaler
 from statsmodels.tsa.seasonal import STL
+from dotenv import load_dotenv
 
+import google.generativeai as genai
+
+load_dotenv()
 
 # --- CONFIGURATION & THEME -------------------------------------------------
 DS_BLUE = "#0f3d5e"
@@ -40,6 +46,10 @@ FEATURE_IMPORTANCE_PATH = MODELS_DIR / "feature_importance.csv"
 PRECISION_WEIGHT = 0.60
 EXPLAINABILITY_WEIGHT = 0.40
 DEFAULT_WINDOW_SIZE = 12
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
 
 app = dash.Dash(
     __name__,
@@ -343,22 +353,28 @@ def layout_descriptif():
                                             lg=6,
                                             md=12,
                                         ),
+                                        dbc.Col(
+                                            [
+                                                html.Label("MÉTHODE DE CLUSTERING", className="filter-label"),
+                                                dcc.Dropdown(
+                                                    id="cluster-method",
+                                                    options=[
+                                                        {"label": "K-Means", "value": "kmeans"},
+                                                        {"label": "DBSCAN", "value": "dbscan"},
+                                                    ],
+                                                    value="kmeans",
+                                                    clearable=False,
+                                                ),
+                                            ],
+                                            lg=3,
+                                            md=6,
+                                            className="mb-3 mb-lg-0",
+                                        ),
                                     ]
                                 ),
                                 html.Div(
-                                    [
-                                        html.Label("NOMBRE DE CLUSTERS KMEANS", className="filter-label mt-4"),
-                                        dcc.Slider(
-                                            id="cluster-count",
-                                            min=2,
-                                            max=min(10, max(2, len(available_products()))),
-                                            step=1,
-                                            value=5,
-                                            marks={i: str(i) for i in range(2, min(10, max(2, len(available_products()))) + 1)},
-                                            tooltip={"placement": "bottom", "always_visible": False},
-                                        ),
-                                    ],
-                                    className="cluster-control",
+                                    id="cluster-controls",
+                                    className="cluster-control mt-4",
                                 ),
                             ]
                         ),
@@ -570,7 +586,36 @@ def layout_correlations(df):
     )
 
 
-def cluster_profile(full_df, n_clusters=5):
+def elbow_method_data(full_df):
+    features = [
+        "Prix_Vente_FCFA_kg",
+        "Pertes_PostRecolte_Pct",
+        "Superficie_Cultivee_ha",
+        "Cout_Transport",
+        "Temperature_Moy",
+        "Score_Choc",
+    ]
+    if full_df.empty:
+        return []
+    features = [col for col in features if col in full_df.columns]
+    profil = full_df.groupby("Produit_ID")[features].mean().dropna()
+    if len(profil) < 2:
+        return []
+
+    scaler = StandardScaler()
+    x_scaled = scaler.fit_transform(profil)
+    
+    inertias = []
+    k_range = range(1, min(11, len(profil) + 1))
+    for k in k_range:
+        km = KMeans(n_clusters=k, random_state=42, n_init=10)
+        km.fit(x_scaled)
+        inertias.append(km.inertia_)
+    
+    return list(zip(k_range, inertias))
+
+
+def cluster_profile(full_df, method="kmeans", n_clusters=5, eps=0.5, min_samples=2):
     features = [
         "Prix_Vente_FCFA_kg",
         "Pertes_PostRecolte_Pct",
@@ -588,9 +633,14 @@ def cluster_profile(full_df, n_clusters=5):
 
     scaler = StandardScaler()
     x_scaled = scaler.fit_transform(profil)
-    n_clusters = max(2, min(int(n_clusters or 5), len(profil)))
-    km = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-    profil["Cluster"] = km.fit_predict(x_scaled)
+    
+    if method == "kmeans":
+        n_clusters = max(2, min(int(n_clusters or 5), len(profil)))
+        model = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+        profil["Cluster"] = model.fit_predict(x_scaled)
+    else:
+        model = DBSCAN(eps=float(eps), min_samples=int(min_samples))
+        profil["Cluster"] = model.fit_predict(x_scaled)
 
     pca = PCA(n_components=2)
     coords = pca.fit_transform(x_scaled)
@@ -598,8 +648,8 @@ def cluster_profile(full_df, n_clusters=5):
     return profil, features
 
 
-def layout_clustering(full_df, n_clusters=5):
-    profil, features = cluster_profile(full_df, n_clusters)
+def layout_clustering(full_df, method="kmeans", n_clusters=5, eps=0.5, min_samples=2):
+    profil, features = cluster_profile(full_df, method, n_clusters, eps, min_samples)
     if profil.empty:
         return empty_state("Segmentation indisponible", "Le volume de données ne permet pas de calculer les clusters.")
 
@@ -609,11 +659,25 @@ def layout_clustering(full_df, n_clusters=5):
         y="PC2",
         color="Cluster",
         text="Produit_ID",
-        title=f"Segmentation PCA des filières - {int(n_clusters)} clusters KMeans",
+        title=f"Segmentation PCA des filières - {method.upper()} clustering",
         color_continuous_scale="Viridis",
     )
     fig_pca.update_traces(textposition="top center", marker=dict(size=12, line=dict(width=1, color="white")))
     fig_pca.update_layout(plot_bgcolor="white")
+
+    elbow_content = []
+    if method == "kmeans":
+        data = elbow_method_data(full_df)
+        if data:
+            ks, inertias = zip(*data)
+            fig_elbow = px.line(
+                x=ks, y=inertias, markers=True,
+                title="Méthode du coude (Inertie par nombre de clusters)",
+                labels={"x": "Nombre de clusters (k)", "y": "Inertie"}
+            )
+            fig_elbow.add_vline(x=n_clusters, line_dash="dash", line_color=DS_DANGER, annotation_text=f"k={n_clusters}")
+            elbow_content = [graph_card("Choix du k (Méthode du coude)", fig_elbow, "Recherchez le point où l'inertie commence à diminuer plus lentement.")]
+
     cluster_summary = (
         profil.reset_index()
         .groupby("Cluster")
@@ -626,6 +690,7 @@ def layout_clustering(full_df, n_clusters=5):
         .reset_index()
         .round(2)
     )
+    
     importance_df = pd.DataFrame(feature_importance_records(10))
     fig_importance = px.bar(
         importance_df.sort_values("importance"),
@@ -640,11 +705,11 @@ def layout_clustering(full_df, n_clusters=5):
     )
 
     return html.Div(
-        [
+        elbow_content + [
             graph_card(
                 "Segmentation des produits",
                 fig_pca,
-                f"Regroupement KMeans sur {len(features)} variables standardisées, projeté en 2 dimensions par PCA.",
+                f"Regroupement {method} sur {len(features)} variables standardisées, projeté en 2 dimensions par PCA.",
             ),
             section_card(
                 "Profil des clusters",
@@ -657,7 +722,7 @@ def layout_clustering(full_df, n_clusters=5):
                     style_cell={"fontFamily": "Inter", "padding": "10px", "textAlign": "left"},
                     style_header={"fontWeight": "800", "backgroundColor": "#f8fafc"},
                 ),
-                "Synthèse métier des groupes calculés avec le nombre de clusters choisi.",
+                "Synthèse métier des groupes calculés avec les paramètres choisis.",
             ),
             graph_card(
                 "Features par ordre d'importance",
@@ -725,7 +790,7 @@ def layout_anomalies(df):
 
 
 def cluster_description(produit, n_clusters=5):
-    profil, features = cluster_profile(df_full, n_clusters)
+    profil, features = cluster_profile(df_full, method="kmeans", n_clusters=n_clusters)
     if profil.empty or produit not in profil.index:
         return "N/A", "profil non disponible"
 
@@ -876,8 +941,10 @@ def model_files():
         return []
     return sorted(
         path
-        for path in MODELS_DIR.glob("*.joblib")
-        if not path.name.endswith("_preprocessor.joblib")
+        for path in MODELS_DIR.glob("*")
+        if path.suffix in [".joblib", ".keras"]
+        and not path.name.endswith("_preprocessor.joblib")
+        and "best_model" not in path.name
     )
 
 
@@ -935,16 +1002,34 @@ def parse_lagged_feature(feature_name):
         return None
 
 
-def model_window_size(model):
+def model_window_size(model, model_name=""):
+    # Check for LSTM metadata first
+    if model_name.endswith(".keras"):
+        preprocessor_path = MODELS_DIR / "lstm_preprocessor.joblib"
+        if preprocessor_path.exists():
+            try:
+                meta = joblib.load(preprocessor_path)
+                return meta.get("window_size", DEFAULT_WINDOW_SIZE)
+            except Exception:
+                pass
+        return DEFAULT_WINDOW_SIZE
+
+    # Existing logic for sklearn models
     feature_names = getattr(model, "feature_names_in_", None)
-    if feature_names is None:
-        return None
-    lags = [
-        parsed[0]
-        for parsed in (parse_lagged_feature(name) for name in feature_names)
-        if parsed is not None
-    ]
-    return max(lags) if lags else None
+    if feature_names is not None:
+        lags = [
+            parsed[0]
+            for parsed in (parse_lagged_feature(name) for name in feature_names)
+            if parsed is not None
+        ]
+        if lags:
+            return max(lags)
+            
+    # MLP often uses PCA, check if it's an MLP
+    if "mlp" in model_name.lower():
+        return DEFAULT_WINDOW_SIZE
+        
+    return None
 
 
 def build_windowed_model_input(history_df, model):
@@ -1066,9 +1151,19 @@ def load_model(model_name):
     if not model_name:
         return None
     model_path = MODELS_DIR / model_name
-    if not model_path.exists() or model_path.suffix != ".joblib":
+    if not model_path.exists():
         return None
-    return joblib.load(model_path)
+    
+    if model_path.suffix == ".joblib":
+        return joblib.load(model_path)
+    elif model_path.suffix == ".keras":
+        try:
+            import tensorflow as tf
+            return tf.keras.models.load_model(model_path)
+        except Exception as exc:
+            print(f"Erreur chargement LSTM : {exc}")
+            return None
+    return None
 
 
 def forecast_regions(produit):
@@ -1242,130 +1337,123 @@ def build_model_input(row, model):
 
 
 def model_forecast(df, horizon, model_name):
+    if not model_name:
+        return baseline_forecast(df, horizon)
+        
     model = load_model(model_name)
     if model is None:
         return baseline_forecast(df, horizon)
 
     rows = []
     history = df.sort_values("Date").copy()
-    last_row = history.iloc[-1].copy()
-    previous_price = float(last_row[TARGET_COL])
-    window_size = model_window_size(model)
+    window_size = model_window_size(model, model_name)
 
     try:
+        # Pre-load LSTM preprocessor if needed
+        lstm_meta = None
+        if model_name.endswith(".keras"):
+            lstm_meta = joblib.load(MODELS_DIR / "lstm_preprocessor.joblib")
+
         for step in range(1, horizon + 1):
             future_date = history["Date"].iloc[-1] + pd.DateOffset(months=1)
-            if window_size:
+            
+            if model_name.endswith(".keras") and lstm_meta:
+                # LSTM sequence building
+                features = lstm_meta["features"]
+                x_scaled = lstm_meta["x_scaler"].transform(history[features])
+                seq = x_scaled[-window_size:]
+                pred_scaled = model.predict(seq[np.newaxis, ...], verbose=0)[0][0]
+                pred = float(lstm_meta["y_scaler"].inverse_transform([[pred_scaled]])[0][0])
+            elif window_size:
                 x_pred = build_windowed_model_input(history, model)
+                pred = float(np.ravel(model.predict(x_pred))[0])
             else:
+                last_row = history.iloc[-1].copy()
                 row = last_row.copy()
                 row["Date"] = future_date
                 if "Prix_T-1" in row.index:
-                    row["Prix_T-1"] = previous_price
+                    row["Prix_T-1"] = float(history[TARGET_COL].iloc[-1])
                 if "Saisonnalite_Sin" in row.index:
                     row["Saisonnalite_Sin"] = np.sin(2 * np.pi * future_date.month / 12)
                 if "Saisonnalite_Cos" in row.index:
                     row["Saisonnalite_Cos"] = np.cos(2 * np.pi * future_date.month / 12)
                 x_pred = build_model_input(row, model)
-            pred = float(np.ravel(model.predict(x_pred))[0])
-            previous_price = pred
+                pred = float(np.ravel(model.predict(x_pred))[0])
+
             history = pd.concat(
                 [history, pd.DataFrame([next_history_row(history, pred, future_date)])],
                 ignore_index=True,
             )
-            last_row = history.iloc[-1].copy()
             rows.append({"Date": future_date, "Prévision": pred})
-        return pd.DataFrame(rows), f"Prévision générée avec le modèle joblib `{model_name}`."
+        return pd.DataFrame(rows), f"Prévision générée avec le modèle `{model_name}`."
     except Exception as exc:
         forecast_df, _ = baseline_forecast(df, horizon)
-        return forecast_df, f"Modèle `{model_name}` chargé, mais prédiction impossible ({exc}). Repli indicatif affiché."
+        return forecast_df, f"Modèle `{model_name}` chargé, mais prédiction impossible ({exc}). Repli indicatif."
 
 
 def recommendation_items(df, forecast_df):
     last_price = float(df[TARGET_COL].iloc[-1])
-    final_price = float(forecast_df["Prévision"].iloc[-1])
+    final_price = forecast_df["Prévision"].iloc[-1]
     variation = ((final_price - last_price) / last_price) * 100 if last_price else 0
     corr_prix, _ = get_price_correlations(df)
     top_feature = corr_prix.index[0] if not corr_prix.empty else "les facteurs PESTEL disponibles"
     shock_recent = df.tail(6)["Score_Choc"].mean() if "Score_Choc" in df else 0
 
-    if variation >= 8:
-        market_action = "Anticiper une hausse : sécuriser les stocks et surveiller les coûts d'approvisionnement."
-    elif variation <= -8:
-        market_action = "Anticiper une détente : ajuster les volumes d'achat et éviter le surstockage."
-    else:
-        market_action = "Maintenir une stratégie graduelle : le prix projeté reste proche du niveau actuel."
-
-    risk_action = (
-        "Renforcer la veille sur les chocs récents, car le score moyen reste élevé."
-        if shock_recent >= 1
-        else "Conserver une veille standard : les chocs récents restent limités sur cette fenêtre."
-    )
-
-    return [
-        f"Variation attendue à l'horizon : {variation:.1f} %.",
-        market_action,
-        risk_action,
-        f"Prioriser le suivi de {top_feature}, facteur le plus associé au prix dans l'historique filtré.",
+    # Recommendations for Investors
+    investor_recs = [
+        f"Variation attendue : {variation:+.1f} %.",
+        "Opportunité de stockage si la hausse est confirmée par les facteurs PESTEL." if variation > 10 else "Marché stable, privilégier la diversification.",
+        f"Surveiller {top_feature} pour anticiper les retournements de tendance."
     ]
+
+    # Recommendations for Farmers
+    farmer_recs = [
+        "Envisager d'avancer les récoltes" if variation < -5 else "Maintenir le calendrier de production.",
+        "Risque de choc élevé : sécuriser les intrants." if shock_recent > 0.5 else "Conditions de marché favorables à la production.",
+        f"Le prix de vente devrait se situer autour de {format_money(final_price)}."
+    ]
+
+    # Recommendations for Consumers
+    consumer_recs = [
+        "Privilégier les achats immédiats avant la hausse." if variation > 5 else "Attendre une baisse potentielle des prix.",
+        f"Budget à prévoir : environ {format_money(final_price)} par kg.",
+        "Surveiller les marchés locaux pour les opportunités saisonnières."
+    ]
+
+    return {
+        "investisseur": investor_recs,
+        "agriculteur": farmer_recs,
+        "consommateur": consumer_recs
+    }
 
 
 def answer_investor_question(question, model_name=None):
-    question = (question or "").lower()
+    if not GEMINI_API_KEY:
+        return html.Div("Assistant indisponible (clé API GEMINI manquante).", className="text-danger")
+
+    question_text = (question or "").strip()
+    if not question_text:
+        return html.Div("Posez une question pour commencer.")
+
     top_features = [row["feature"] for row in feature_importance_records(5)]
-    if "feature" in question or "variable" in question or "facteur" in question:
-        return html.Div(
-            [
-                html.Strong("Top 5 features clés :"),
-                html.Ul([html.Li(feature) for feature in top_features]),
-                html.Div("Ces variables sont priorisées pour réduire la dimension avant entraînement."),
-            ]
-        )
-
-    if "2027" in question or "fili" in question or "lancer" in question or "invest" in question:
-        model_name = model_name or recommended_model_name()
-        rows = []
-        for (produit, region), sub in df_full.groupby(["Produit_ID", "Region_Vente"]):
-            sub = sub.sort_values("Date").copy()
-            if len(sub) < DEFAULT_WINDOW_SIZE + 1:
-                continue
-            forecast_df, _ = model_forecast(sub, 12, model_name)
-            avg_forecast = float(forecast_df["Prévision"].mean())
-            stability = 1 / (1 + float(sub[TARGET_COL].tail(24).std() / max(sub[TARGET_COL].tail(24).mean(), 1)))
-            score = avg_forecast * stability
-            rows.append(
-                {
-                    "produit": produit,
-                    "region": region,
-                    "prix_prevu": avg_forecast,
-                    "stabilite": stability,
-                    "score": score,
-                }
-            )
-        best = sorted(rows, key=lambda row: row["score"], reverse=True)[:5]
-        return html.Div(
-            [
-                html.Strong("Filières à analyser en priorité pour 2027 :"),
-                html.Ol(
-                    [
-                        html.Li(
-                            f"{row['produit']} ({row['region']}) - prix moyen prévu {row['prix_prevu']:.0f} FCFA/kg, stabilité {row['stabilite']:.2f}."
-                        )
-                        for row in best
-                    ]
-                ),
-                html.Div(
-                    "Réponse basée sur l'historique local et le modèle recommandé. Une API de recherche externe pourra enrichir cette réponse au déploiement."
-                ),
-            ]
-        )
-
-    return html.Div(
-        [
-            html.Strong("Réponse rapide :"),
-            html.Div("Essayez par exemple : 'donne les 5 features clés' ou 'dans quelle filière se lancer en 2027 ?'."),
-        ]
+    context = (
+        f"Tu dispose des donnees de janvier 2015 a mai 2026"
+        f"Tu es un assistant expert en économie agricole pour le projet AaPROVIDIR. "
+        f"Le projet analyse les prix agricoles au Cameroun. "
+        f"Top features PESTEL identifiées : {', '.join(top_features)}. "
+        f"Réponds de manière concise, professionnelle et en français."
     )
+    
+    try:
+        # Switching to 'gemini-flash-latest' which often has more stable quotas
+        model = genai.GenerativeModel("gemini-flash-latest")
+        chat = model.start_chat(history=[])
+        response = chat.send_message(f"{context}\n\nQuestion de l'utilisateur : {question_text}")
+        return dcc.Markdown(response.text)
+    except Exception as exc:
+        if "429" in str(exc):
+            return html.Div("Quota API Gemini dépassé. Veuillez patienter quelques secondes ou vérifier votre compte sur Google AI Studio.", className="text-warning")
+        return html.Div(f"Erreur assistant Gemini : {exc}", className="text-warning")
 
 
 def layout_forecast_result(produit, region, model_name, horizon):
@@ -1402,9 +1490,29 @@ def layout_forecast_result(produit, region, model_name, horizon):
             ),
             graph_card("Trajectoire prévisionnelle", fig, model_message),
             section_card(
-                "Recommandations",
-                html.Ul([html.Li(item) for item in recs], className="recommendation-list"),
-                "Synthèse opérationnelle fondée sur la tendance prévue, les chocs récents et les corrélations historiques.",
+                "Recommandations par segment",
+                dbc.Tabs(
+                    [
+                        dbc.Tab(
+                            html.Ul([html.Li(item) for item in recs["investisseur"]], className="recommendation-list mt-3"),
+                            label="Investisseur",
+                            tab_id="tab-investisseur"
+                        ),
+                        dbc.Tab(
+                            html.Ul([html.Li(item) for item in recs["agriculteur"]], className="recommendation-list mt-3"),
+                            label="Agriculteur",
+                            tab_id="tab-agriculteur"
+                        ),
+                        dbc.Tab(
+                            html.Ul([html.Li(item) for item in recs["consommateur"]], className="recommendation-list mt-3"),
+                            label="Consommateur",
+                            tab_id="tab-consommateur"
+                        ),
+                    ],
+                    active_tab="tab-investisseur",
+                    id="recommendation-tabs",
+                ),
+                "Conseils personnalisés selon votre profil et les tendances prévues.",
             ),
         ],
         className="stacked-content",
@@ -1556,19 +1664,34 @@ def evaluate_loaded_model(df, model_name, test_ratio, window_size=DEFAULT_WINDOW
     df = df.sort_values("Date").reset_index(drop=True)
     train_df, test_df = split_train_test(df, test_ratio)
     model = load_model(model_name)
-    expected_window = model_window_size(model)
-    if expected_window and int(window_size or DEFAULT_WINDOW_SIZE) != expected_window:
-        raise ValueError(f"modèle entraîné avec une fenêtre de {expected_window} mois")
+    expected_window = model_window_size(model, model_name)
+    
     predictions = []
+    lstm_meta = None
+    if model_name.endswith(".keras"):
+        try:
+            lstm_meta = joblib.load(MODELS_DIR / "lstm_preprocessor.joblib")
+        except:
+            pass
 
     train_len = len(train_df)
     for offset, (_, row) in enumerate(test_df.iterrows()):
-        if expected_window:
-            history = df.iloc[: train_len + offset]
+        history = df.iloc[: train_len + offset]
+        
+        if model_name.endswith(".keras") and lstm_meta:
+            features = lstm_meta["features"]
+            x_scaled = lstm_meta["x_scaler"].transform(history[features])
+            seq = x_scaled[-expected_window:]
+            pred_scaled = model.predict(seq[np.newaxis, ...], verbose=0)[0][0]
+            pred = float(lstm_meta["y_scaler"].inverse_transform([[pred_scaled]])[0][0])
+        elif expected_window:
             x_pred = build_windowed_model_input(history, model)
+            pred = float(np.ravel(model.predict(x_pred))[0])
         else:
             x_pred = build_model_input(row.copy(), model)
-        predictions.append(float(np.ravel(model.predict(x_pred))[0]))
+            pred = float(np.ravel(model.predict(x_pred))[0])
+        
+        predictions.append(pred)
 
     metrics = metric_summary(test_df[TARGET_COL], predictions)
     return {
@@ -1783,6 +1906,37 @@ def display_page(pathname):
 
 
 @app.callback(
+    Output("cluster-controls", "children"),
+    Input("cluster-method", "value")
+)
+def update_cluster_controls(method):
+    if method == "kmeans":
+        return [
+            html.Label("NOMBRE DE CLUSTERS (K)", className="filter-label"),
+            dcc.Slider(
+                id={"type": "cluster-param", "index": "n_clusters"},
+                min=2,
+                max=min(10, max(2, len(available_products()))),
+                step=1,
+                value=5,
+                marks={i: str(i) for i in range(2, min(10, max(2, len(available_products()))) + 1)},
+                tooltip={"placement": "bottom", "always_visible": False},
+            ),
+        ]
+    else:
+        return dbc.Row([
+            dbc.Col([
+                html.Label("EPS (DISTANCE MAX)", className="filter-label"),
+                dcc.Input(id={"type": "cluster-param", "index": "eps"}, type="number", value=0.5, step=0.1, min=0.1, className="form-control"),
+            ], width=6),
+            dbc.Col([
+                html.Label("MIN SAMPLES", className="filter-label"),
+                dcc.Input(id={"type": "cluster-param", "index": "min_samples"}, type="number", value=2, step=1, min=1, className="form-control"),
+            ], width=6),
+        ])
+
+
+@app.callback(
     [Output("filter-region", "options"), Output("filter-region", "value")],
     Input("filter-produit", "value"),
 )
@@ -1800,16 +1954,17 @@ def update_region_options(produit_selected):
         Input("filter-region", "value"),
         Input("filter-date", "start_date"),
         Input("filter-date", "end_date"),
-        Input("cluster-count", "value"),
+        Input("cluster-method", "value"),
+        Input({"type": "cluster-param", "index": dash.ALL}, "value"),
     ],
 )
-def render_tab_content(active_tab, produit, region, start, end, cluster_count):
+def render_tab_content(active_tab, produit, region, start, end, cluster_method, cluster_params):
     if not produit or not region:
         return dbc.Alert("Sélectionnez un produit et une région.", color="warning")
 
     df = filtered_df(produit, region, start, end)
     if df.empty:
-        return dbc.Alert(f"Données non disponibles pour {produit} à {region}.", color="info", className="mt-4")
+        return dbc.Alert(f"Données non disponibles for {produit} à {region}.", color="info", className="mt-4")
 
     if active_tab == "tab-metier":
         return layout_metier(df, produit, region)
@@ -1820,11 +1975,15 @@ def render_tab_content(active_tab, produit, region, start, end, cluster_count):
     if active_tab == "tab-correlations":
         return layout_correlations(df)
     if active_tab == "tab-clustering":
-        return layout_clustering(df_full, cluster_count)
+        n_clusters = cluster_params[0] if cluster_method == "kmeans" and cluster_params else 5
+        eps = cluster_params[0] if cluster_method == "dbscan" and cluster_params else 0.5
+        min_samples = cluster_params[1] if cluster_method == "dbscan" and len(cluster_params) > 1 else 2
+        return layout_clustering(df_full, cluster_method, n_clusters, eps, min_samples)
     if active_tab == "tab-anomalies":
         return layout_anomalies(df)
     if active_tab == "tab-conclusion":
-        return layout_conclusion(df, produit, region, cluster_count)
+        n_clusters = cluster_params[0] if cluster_method == "kmeans" and cluster_params else 5
+        return layout_conclusion(df, produit, region, n_clusters)
     return layout_metier(df, produit, region)
 
 

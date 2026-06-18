@@ -158,15 +158,27 @@ def regression_metrics(y_true: pd.Series | np.ndarray, y_pred: np.ndarray) -> di
 
 def build_candidate_models(quick: bool, pca_components: int, n_features: int):
     pca_n = max(1, min(pca_components, n_features))
+    
+    # Expanded grids for better optimization
     rf_grid = (
-        {"model__n_estimators": [120], "model__max_depth": [8, None], "model__min_samples_leaf": [1, 3]}
+        {"model__n_estimators": [150], "model__max_depth": [10], "model__min_samples_leaf": [2]}
         if quick
-        else {"model__n_estimators": [180, 280], "model__max_depth": [8, 14, None], "model__min_samples_leaf": [1, 2, 4]}
+        else {
+            "model__n_estimators": [200, 300, 500],
+            "model__max_depth": [10, 20, 30, None],
+            "model__min_samples_leaf": [1, 2, 4],
+            "model__max_features": ["sqrt", "log2", None]
+        }
     )
+    
     mlp_grid = (
-        {"model__hidden_layer_sizes": [(48,), (64, 24)], "model__alpha": [0.0005]}
+        {"model__hidden_layer_sizes": [(64, 32)], "model__alpha": [0.001]}
         if quick
-        else {"model__hidden_layer_sizes": [(64,), (96, 48)], "model__alpha": [0.0001, 0.0005]}
+        else {
+            "model__hidden_layer_sizes": [(64,), (128, 64), (64, 32, 16)],
+            "model__alpha": [0.0001, 0.001, 0.01],
+            "model__learning_rate_init": [0.001, 0.005]
+        }
     )
 
     candidates = {
@@ -179,8 +191,9 @@ def build_candidate_models(quick: bool, pca_components: int, n_features: int):
                         "model",
                         MLPRegressor(
                             random_state=RANDOM_STATE,
-                            max_iter=600 if quick else 1200,
+                            max_iter=1000 if quick else 2000,
                             early_stopping=True,
+                            validation_fraction=0.1,
                         ),
                     ),
                 ]
@@ -199,13 +212,14 @@ def build_candidate_models(quick: bool, pca_components: int, n_features: int):
         from xgboost import XGBRegressor
 
         xgb_grid = (
-            {"model__n_estimators": [160], "model__max_depth": [3, 5], "model__learning_rate": [0.05, 0.1]}
+            {"model__n_estimators": [200], "model__max_depth": [4], "model__learning_rate": [0.05]}
             if quick
             else {
-                "model__n_estimators": [220, 320],
-                "model__max_depth": [3, 5],
-                "model__learning_rate": [0.03, 0.08, 0.12],
-                "model__subsample": [0.85, 1.0],
+                "model__n_estimators": [300, 500, 800],
+                "model__max_depth": [3, 5, 7],
+                "model__learning_rate": [0.01, 0.05, 0.1],
+                "model__subsample": [0.7, 0.85, 1.0],
+                "model__colsample_bytree": [0.7, 0.85, 1.0],
             }
         )
         candidates["xgboost_model"] = (
@@ -396,21 +410,60 @@ def train_lstm_model(df: pd.DataFrame, train_cutoff: pd.Timestamp, features: lis
     )
 
 
+def calculate_model_score(result: StudyResult) -> float:
+    """
+    Logic for selecting the best model.
+    Higher is better.
+    Combines Precision (MAE), Stability (R2), and a transparency bonus.
+    """
+    if result.holdout_mae is None or result.holdout_r2 is None:
+        return -1.0
+    
+    # Normalization factor for MAE (assuming price range is ~500-2000)
+    # We want a score that increases as MAE decreases
+    mae_score = 1.0 / (1.0 + (result.holdout_mae / 100.0))
+    
+    # R2 component (clamped to [0, 1] for sanity)
+    r2_score = max(0, min(1, result.holdout_r2))
+    
+    # Transparency bonus (explicability)
+    transparency = 1.0
+    name = result.name.lower()
+    if "regression" in name:
+        transparency = 1.0
+    elif "random_forest" in name:
+        transparency = 0.8
+    elif "xgboost" in name:
+        transparency = 0.7
+    elif "mlp" in name or "lstm" in name:
+        transparency = 0.5
+        
+    # Weighted sum: 50% Precision, 30% Stability, 20% Transparency
+    return (0.5 * mae_score) + (0.3 * r2_score) + (0.2 * transparency)
+
+
 def save_results(results: list[StudyResult], models_dir: Path, feature_importance: pd.DataFrame) -> None:
     records = [asdict(result) for result in results]
     metrics_df = pd.DataFrame(records)
     metrics_df.to_csv(models_dir / "model_study_metrics.csv", index=False)
     (models_dir / "model_study_results.json").write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
     feature_importance.to_csv(models_dir / "feature_importance.csv", index=False)
-    trained_joblib = [
+    
+    trained_models = [
         result
         for result in results
-        if result.status == "trained" and result.path and result.path.endswith(".joblib") and result.holdout_mae is not None
+        if result.status == "trained" and result.path and result.holdout_mae is not None
     ]
-    if trained_joblib:
-        best = min(trained_joblib, key=lambda result: result.holdout_mae or float("inf"))
-        shutil.copyfile(BASE_DIR / best.path, models_dir / "best_model.joblib")
-        (models_dir / "best_model_metadata.json").write_text(json.dumps(asdict(best), ensure_ascii=False, indent=2), encoding="utf-8")
+    
+    if trained_models:
+        # Improved selection logic
+        best = max(trained_models, key=calculate_model_score)
+        print(f"\n---> Meilleur modèle sélectionné : {best.name} (Score: {calculate_model_score(best):.3f})")
+        
+        source_path = BASE_DIR / best.path
+        if source_path.exists():
+            shutil.copyfile(source_path, models_dir / "best_model.joblib")
+            (models_dir / "best_model_metadata.json").write_text(json.dumps(asdict(best), ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def main() -> int:
